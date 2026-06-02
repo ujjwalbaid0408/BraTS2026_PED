@@ -1,0 +1,15 @@
+# Keep the Docker build context small — exclude large data / artefacts.
+data/
+data_ss/
+venv/
+nnUNet/
+manuscripts/
+slurm_logs/
+brats-mets-segmentation/
+docker/sample_run/
+docker/bratsped2026.sif
+**/__pycache__/
+*.out
+*.err
+*.pyc
+.git/

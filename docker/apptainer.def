@@ -1,0 +1,47 @@
+# ============================================================================
+#  Apptainer/Singularity mirror of docker/Dockerfile.
+#
+#  This HPC provides Apptainer (not a Docker daemon), so we use this definition
+#  to build a .sif for the local 10-case demo and for SLURM inference.
+#
+#  Build (from PROJECT ROOT — model must already be staged in docker/model):
+#     apptainer build docker/bratsped2026.sif docker/apptainer.def
+#
+#  Run:
+#     apptainer run --nv \
+#         --bind /path/to/cases:/input \
+#         --bind /path/to/out:/output \
+#         docker/bratsped2026.sif
+# ============================================================================
+Bootstrap: docker
+From: nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+%files
+    code /opt/brats_ped/code
+    docker/model /opt/model
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 python3-pip python3.10-venv git
+    ln -sf /usr/bin/python3.10 /usr/bin/python
+    rm -rf /var/lib/apt/lists/*
+    pip install --upgrade pip
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+    pip install -e /opt/brats_ped/code
+    mkdir -p /tmp/nnunet_raw /tmp/nnunet_preprocessed /input /output
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export nnUNet_raw=/tmp/nnunet_raw
+    export nnUNet_preprocessed=/tmp/nnunet_preprocessed
+    export nnUNet_results=/opt/model
+    export INPUT_DIR=/input
+    export OUTPUT_DIR=/output
+    export BRATS_PED_INFER_FOLDS=0
+    export BRATS_PED_SS_METHOD=hdbet
+    export BRATS_PED_SS_DEVICE=gpu
+    export nnUNet_compile=f
+
+%runscript
+    exec python /opt/brats_ped/code/predict_entry.py "$@"

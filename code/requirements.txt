@@ -1,0 +1,29 @@
+# ─── BraTS-PED 2026 segmentation — Python dependencies ─────────────────────────
+# Install with:  pip install -e .        (preferred; reads setup.py)
+# or:            pip install -r requirements.txt
+#
+# Install the CUDA-matched PyTorch wheel FIRST (see setup_env.sh / README), e.g.
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# ─── Core framework (winning backbone) ─────────────────────────────────────────
+nnunetv2>=2.5.1
+
+# ─── Medical image I/O ─────────────────────────────────────────────────────────
+nibabel>=5.2.0
+SimpleITK>=2.3.0
+
+# ─── Numerical / scientific ────────────────────────────────────────────────────
+numpy>=1.26.0
+scipy>=1.11.0
+scikit-image>=0.22.0
+
+# ─── Deep learning (nnU-Net pulls a compatible torch if absent) ────────────────
+torch>=2.2.0
+
+# ─── Utilities / plotting ──────────────────────────────────────────────────────
+tqdm>=4.66.0
+pandas>=2.1.0
+matplotlib>=3.8.0
+
+# ─── Skull-stripping backend (pip fallback; SynthStrip preferred if available) ─
+HD-BET>=2.0.0

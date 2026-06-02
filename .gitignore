@@ -1,0 +1,37 @@
+# ─── Data (challenge data is not redistributable) ──────────────────────────────
+data/
+data_ss/
+manuscripts/
+
+# ─── Environments / build ──────────────────────────────────────────────────────
+venv/
+*.egg-info/
+__pycache__/
+*.pyc
+build/
+dist/
+
+# ─── nnU-Net workspace & model weights (large) ─────────────────────────────────
+nnUNet/
+docker/model/
+docker/*.sif
+docker/sample_run/
+predictions/
+
+# ─── Logs / outputs ────────────────────────────────────────────────────────────
+slurm_logs/
+*.out
+*.err
+code/logs/
+holdout_test_cases.txt
+
+# ─── LaTeX build artefacts ─────────────────────────────────────────────────────
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.synctex.gz
+
+# ─── Old reference repo (kept locally, not pushed) ─────────────────────────────
+brats-mets-segmentation/
+.claude/

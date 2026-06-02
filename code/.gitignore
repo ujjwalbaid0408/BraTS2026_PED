@@ -1,0 +1,35 @@
+# Virtual environment
+venv_brats_mets/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# nnU-Net outputs (large — stored outside repo)
+nnUNet_raw/
+nnUNet_preprocessed/
+nnUNet_results/
+
+# Predictions / results CSVs (large)
+Predictions/
+*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
