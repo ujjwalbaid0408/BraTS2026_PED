@@ -24,6 +24,7 @@ Output layout mirrors the input (one folder per case):
 """
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -90,8 +91,11 @@ def _mask_hdbet(in_path: Path, mask_path: Path, device: str) -> None:
     dev = "cuda" if device == "gpu" else "cpu"
     exe = _resolve_exe("hd-bet")
     # HD-BET v2 CLI: writes brain-extracted image + (with flag) the mask.
+    # TTA is disabled by default: it ~8x's runtime for only a marginal mask-quality
+    # gain, and brain extraction is not the accuracy bottleneck. Set BRATS_PED_BET_TTA=1
+    # to re-enable.
     cmd = [exe, "-i", str(in_path), "-o", str(out_img), "-device", dev, "--save_bet_mask"]
-    if dev == "cpu":
+    if os.environ.get("BRATS_PED_BET_TTA", "0") != "1":
         cmd.append("--disable_tta")
     try:
         subprocess.run(cmd, check=True)
@@ -161,6 +165,67 @@ def strip_case(case: Dict, out_root: Path, backend: str, device: str) -> None:
     done_flag.touch()
 
 
+def _apply_mask_and_copy(case: Dict, out_dir: Path, mask: "np.ndarray") -> None:
+    case_id = case["case_id"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for suffix, src in case["images"].items():
+        img = nib.load(str(src))
+        data = np.asarray(img.dataobj, dtype=np.float32)
+        data[~mask] = 0
+        nib.save(nib.Nifti1Image(data, img.affine, img.header),
+                 str(out_dir / f"{case_id}-{suffix}.nii.gz"))
+    if case.get("seg"):
+        shutil.copy2(case["seg"], out_dir / f"{case_id}-seg.nii.gz")
+    (out_dir / ".stripped_ok").touch()
+
+
+def _batched_hdbet(cases, out_root: Path, device: str) -> None:
+    """
+    Efficient HD-BET: stage the reference modality of every pending case into one
+    folder and run hd-bet ONCE (the model + CUDA context are loaded a single time
+    instead of per case), then apply each mask to its four modalities.
+    """
+    import subprocess
+    import tempfile
+
+    pending = [c for c in cases if not (out_root / c["case_id"] / ".stripped_ok").exists()]
+    if not pending:
+        LOG.info("All cases already stripped — nothing to do.")
+        return
+
+    work = Path(tempfile.mkdtemp(prefix="hdbet_batch_"))
+    in_dir, out_dir = work / "in", work / "out"
+    in_dir.mkdir(parents=True, exist_ok=True)
+    for c in pending:
+        # hd-bet reads every *.nii.gz in the folder; name by case id.
+        (in_dir / f"{c['case_id']}.nii.gz").symlink_to(c["images"][MASK_MODALITY].resolve())
+
+    exe = _resolve_exe("hd-bet")
+    dev = "cuda" if device == "gpu" else "cpu"
+    cmd = [exe, "-i", str(in_dir), "-o", str(out_dir), "-device", dev,
+           "--save_bet_mask", "--no_bet_image"]
+    if os.environ.get("BRATS_PED_BET_TTA", "0") != "1":
+        cmd.append("--disable_tta")
+    LOG.info("Running HD-BET once over %d cases: %s", len(pending), " ".join(cmd))
+    subprocess.run(cmd, check=True)
+
+    # hd-bet writes <case_id>_bet.nii.gz masks into out_dir.
+    for i, c in enumerate(pending, 1):
+        cid = c["case_id"]
+        cand = list(out_dir.glob(f"{cid}*bet*.nii.gz")) or list(out_dir.glob(f"{cid}.nii.gz"))
+        if not cand:
+            LOG.error("No mask produced for %s", cid)
+            continue
+        mask = np.asarray(nib.load(str(cand[0])).dataobj) > 0
+        try:
+            _apply_mask_and_copy(c, out_root / cid, mask)
+        except Exception as exc:
+            LOG.error("FAILED applying mask %s: %s", cid, exc)
+        if i % 25 == 0 or i == len(pending):
+            LOG.info("  applied %d / %d masks", i, len(pending))
+    shutil.rmtree(work, ignore_errors=True)
+
+
 def strip_folder(root_dirs, out_root: Path, backend: str, device: str,
                  require_seg: bool, limit: Optional[int] = None) -> int:
     cases = discover_cases(root_dirs, MODALITY_MAP, CASE_PREFIX, require_seg=require_seg)
@@ -169,13 +234,17 @@ def strip_folder(root_dirs, out_root: Path, backend: str, device: str,
     LOG.info("Skull-stripping %d cases -> %s (backend=%s, device=%s)",
              len(cases), out_root, backend, device)
     out_root.mkdir(parents=True, exist_ok=True)
-    for i, case in enumerate(cases, 1):
-        try:
-            strip_case(case, out_root, backend, device)
-        except Exception as exc:
-            LOG.error("FAILED %s: %s", case["case_id"], exc)
-        if i % 10 == 0 or i == len(cases):
-            LOG.info("  %d / %d done", i, len(cases))
+
+    if backend == "hdbet":
+        _batched_hdbet(cases, out_root, device)
+    else:
+        for i, case in enumerate(cases, 1):
+            try:
+                strip_case(case, out_root, backend, device)
+            except Exception as exc:
+                LOG.error("FAILED %s: %s", case["case_id"], exc)
+            if i % 10 == 0 or i == len(cases):
+                LOG.info("  %d / %d done", i, len(cases))
     LOG.info("Done -> %s", out_root)
     return len(cases)
 

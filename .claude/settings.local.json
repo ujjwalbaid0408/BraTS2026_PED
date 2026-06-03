@@ -50,7 +50,10 @@
       "Bash(pdfinfo main.pdf)",
       "Bash(git rm *)",
       "Bash(git add *)",
-      "Bash(git commit -q -m 'BraTS-PED 2026 Task 2: skull-strip + nnU-Net ResEnc-L ensemble + lesion-wise post-processing *)"
+      "Bash(git commit -q -m 'BraTS-PED 2026 Task 2: skull-strip + nnU-Net ResEnc-L ensemble + lesion-wise post-processing *)",
+      "Bash(scancel 509135 509136)",
+      "Bash(nohup bash -c ' *)",
+      "Bash(echo \"plans monitor relaunched, pid $!\")"
     ]
   }
 }
