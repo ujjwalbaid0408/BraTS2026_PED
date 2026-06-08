@@ -50,8 +50,8 @@ def _find_training_folder(dataset_id: int, trainer: str, planner: str, fold: str
         sys.exit(1)
     dataset_dir = dataset_dirs[0]
 
-    # nnU-Net layout: <dataset>/<trainer>__<planner>/<config>/fold_<x>
-    config_pattern = f"{trainer}__{planner}/{CONFIGURATION}/fold_{fold}"
+    # nnU-Net layout: <dataset>/<trainer>__<planner>__<config>/fold_<x>
+    config_pattern = f"{trainer}__{planner}__{CONFIGURATION}/fold_{fold}"
     fold_dir = dataset_dir / config_pattern
     if not fold_dir.exists():
         LOG.error("Fold directory not found: %s", fold_dir)

@@ -1,15 +1,18 @@
 """
-Evaluation metrics for BraTS-METS 2025 segmentation.
+Evaluation metrics for BraTS-PED 2026 segmentation.
 
 Computes per-case and aggregate:
   - Dice Similarity Coefficient (DSC)
   - Normalized Surface Distance (NSD, tolerance = 1 mm)
 
-For composite regions:
-  ET  — Enhancing Tumor (label 3)
-  RC  — Resection Cavity (label 4)
-  TC  — Tumor Core = NETC + ET (labels 1 + 3)
-  WT  — Whole Tumor = NETC + SNFH + ET (labels 1 + 2 + 3)
+BraTS-PED label scheme (dataset.json): background=0, ET=1, NET=2, CC=3, ED=4.
+Evaluated regions (see EVAL_REGIONS in config.py; per BraTS-PED guidelines):
+  ET  — Enhancing Tumor          (label 1)
+  NET — Non-Enhancing Tumor core (label 2)
+  CC  — Cystic Components        (label 3)
+  ED  — Peritumoral Edema        (label 4)
+  TC  — Tumor Core  = ET + NET + CC       (labels 1 + 2 + 3)
+  WT  — Whole Tumor = ET + NET + CC + ED  (labels 1 + 2 + 3 + 4)
 
 Usage:
     # Evaluate against ground truth:
@@ -222,7 +225,7 @@ def evaluate_folder(
 # ─── CLI ───────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Evaluate BraTS-METS predictions.")
+    p = argparse.ArgumentParser(description="Evaluate BraTS-PED predictions.")
     p.add_argument("--pred",   required=True, type=Path, help="Directory with predicted .nii.gz files.")
     p.add_argument("--gt",     required=True, type=Path, help="Directory with ground-truth .nii.gz files.")
     p.add_argument("--output", type=Path, default=None,

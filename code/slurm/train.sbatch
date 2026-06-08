@@ -25,7 +25,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=56G
 #SBATCH --gpus=1
-#SBATCH --time=24:00:00
+#SBATCH --time=36:00:00
 #SBATCH --requeue
 #SBATCH --output=/scratch/ubaid/BraTS2026_PED/slurm_logs/train_%j.out
 #SBATCH --error=/scratch/ubaid/BraTS2026_PED/slurm_logs/train_%j.err
@@ -41,12 +41,12 @@ VENV="${PROJECT_ROOT}/venv"
 export nnUNet_raw="${PROJECT_ROOT}/nnUNet/nnUNet_raw"
 export nnUNet_preprocessed="${PROJECT_ROOT}/nnUNet/nnUNet_preprocessed"
 export nnUNet_results="${PROJECT_ROOT}/nnUNet/nnUNet_results"
-export nnUNet_n_proc_DA="${SLURM_CPUS_PER_TASK:-8}"
+export nnUNet_n_proc_DA="${nnUNet_n_proc_DA:-${SLURM_CPUS_PER_TASK:-8}}"
 export PYTHONUNBUFFERED=1
 
 # ── Training config (override via --export) ─────────────────────────────────
 FOLD="${FOLD:-0}"
-TRAINER="${TRAINER:-nnUNetTrainer}"
+TRAINER="${TRAINER:-nnUNetTrainer_250epochs}"
 PLANNER="${PLANNER:-nnUNetResEncUNetLPlans}"
 DATASET_ID="${DATASET_ID:-21}"
 CONFIG="${CONFIG:-3d_fullres}"
@@ -62,10 +62,10 @@ echo "=========================================================="
 source "${VENV}/bin/activate"
 
 # ── Detect existing checkpoint → resume ─────────────────────────────────────
-FOLD_DIR=$(find "${nnUNet_results}" -type d -path "*${TRAINER}__${PLANNER}*/${CONFIG}/fold_${FOLD}" 2>/dev/null | head -1 || true)
+FOLD_DIR=$(find "${nnUNet_results}" -type d -path "*${TRAINER}__${PLANNER}__${CONFIG}/fold_${FOLD}" 2>/dev/null | head -1 || true)
 RESUME_FLAG=""
-if [[ -n "${FOLD_DIR}" && -f "${FOLD_DIR}/checkpoint_latest.pth" ]]; then
-    echo "[INFO] Found checkpoint at ${FOLD_DIR}/checkpoint_latest.pth — resuming with --c"
+if [[ -n "${FOLD_DIR}" ]] && compgen -G "${FOLD_DIR}/checkpoint_*.pth" > /dev/null 2>&1; then
+    echo "[INFO] Found checkpoint(s) in ${FOLD_DIR} — resuming with --c"
     RESUME_FLAG="--c"
 fi
 

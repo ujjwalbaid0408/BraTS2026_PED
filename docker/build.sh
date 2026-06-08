@@ -51,7 +51,7 @@ if command -v docker >/dev/null 2>&1; then
     docker build -f docker/Dockerfile -t bratsped2026:latest .
 elif command -v apptainer >/dev/null 2>&1; then
     echo "[INFO] Building Apptainer image docker/bratsped2026.sif"
-    apptainer build "${DOCKER_DIR}/bratsped2026.sif" "${DOCKER_DIR}/apptainer.def"
+    apptainer build --fakeroot "${DOCKER_DIR}/bratsped2026.sif" "${DOCKER_DIR}/apptainer.def"
 else
     echo "[ERROR] Neither docker nor apptainer found."
     exit 1

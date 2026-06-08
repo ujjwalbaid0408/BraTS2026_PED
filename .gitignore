@@ -17,6 +17,7 @@ docker/model/
 docker/*.sif
 docker/sample_run/
 predictions/
+predictions_500/
 
 # ─── Logs / outputs ────────────────────────────────────────────────────────────
 slurm_logs/
