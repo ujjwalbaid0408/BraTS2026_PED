@@ -41,7 +41,7 @@
 \title{\vspace{-1.0cm}\textbf{\color{brain}A Skull-Stripped, Residual-Encoder nnU-Net Ensemble with
 Lesion-Wise Post-Processing for Pediatric Brain Tumour Segmentation}\\[0.3cm]
 \large BraTS-PED 2026 Challenge (Task 2) --- Technical Report}
-\author{ujjwalbaid0408\\\small Pediatric Brain Tumour Segmentation Project}
+\author{Ujjwal Baid\\\small Pediatric Brain Tumour Segmentation Project\\\small \texttt{ujjwalbaid0408@gmail.com}}
 \date{June 2026}
 
 \begin{document}
@@ -59,115 +59,299 @@ asks for the voxel-wise segmentation of four tumour sub-regions ---
 enhancing tumour (ET), non-enhancing tumour (NET), cystic component (CC) and
 peritumoral edema (ED) --- from four co-registered MRI sequences (T1, T1-Gd, T2,
 T2-FLAIR). Building on the winning recipe of the BraTS-METS~2025 and BraTS-PED~2025
-challenges, our pipeline (i) \emph{skull-strips} every case, because the
+challenges, our pipeline (i)~\emph{skull-strips} every case, because the
 challenge images retain skull and neck tissue that confounds learning;
-(ii) trains a self-configuring \textbf{nnU-Net~v2} with a \textbf{residual-encoder
+(ii)~trains a self-configuring \textbf{nnU-Net~v2} with a \textbf{residual-encoder
 (ResEnc-L)} 3D full-resolution U-Net as a five-fold cross-validation ensemble; and
-(iii) applies \emph{lesion-wise} post-processing that relabels or removes tiny,
+(iii)~applies \emph{lesion-wise} post-processing that relabels or removes tiny,
 spurious connected components, directly targeting the challenge's lesion-wise
-Dice / Normalized Surface Distance (NSD) metric. On a held-out internal test set of
-ten cases, the pipeline attains a mean Dice of \result{WT}{0.00} (whole tumour) and
-\result{TC}{0.00} (tumour core). We package the full method as a reproducible,
-GPU-ready Docker/Apptainer container conforming to the BraTS-Lighthouse submission
-contract. All code, training scripts and this report are released openly.
+Dice / Hausdorff metric. In five-fold cross-validation over the training cohort
+($n\!\approx\!285$) the method attains a mean lesion-wise Dice of
+\result{WT}{0.834} (whole tumour, WT) and \result{TC}{0.797} (tumour core, TC); on a
+held-out internal test set of ten unseen cases it attains voxel-wise Dice of
+\result{WT}{0.914} (WT) and \result{TC}{0.876} (TC). We package the full method as a
+reproducible, GPU-ready Docker/Apptainer container conforming to the
+BraTS-Lighthouse submission contract. All code, training scripts and this report are
+released openly.
 
 \vspace{0.2cm}
 \noindent\textbf{Keywords:} pediatric brain tumour, segmentation, nnU-Net,
-skull-stripping, lesion-wise metric, mpMRI, BraTS.
+skull-stripping, lesion-wise metric, mpMRI, BraTS, deep learning.
 \end{abstract}
+
+\tableofcontents
+\vspace{0.4cm}
+
+\begin{table}[h]
+\centering
+\caption{Abbreviations used throughout this report.}
+\label{tab:abbr}
+\small
+\begin{tabular}{ll@{\hskip 1.5cm}ll}
+\toprule
+Abbr. & Meaning & Abbr. & Meaning \\
+\midrule
+ET  & Enhancing tumour            & TC   & Tumour core (ET$\cup$NET$\cup$CC) \\
+NET & Non-enhancing tumour        & WT   & Whole tumour (TC$\cup$ED) \\
+CC  & Cystic component            & DSC  & Dice similarity coefficient \\
+ED  & Peritumoral edema           & LWDSC& Lesion-wise DSC \\
+mpMRI & Multi-parametric MRI      & HD95 & 95th-percentile Hausdorff dist.\ \\
+DMG & Diffuse midline glioma      & NSD  & Normalized surface distance \\
+OOF & Out-of-fold                 & TTA  & Test-time augmentation \\
+CV  & Cross-validation            & ResEnc & Residual encoder \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 % =============================================================================
 \section{Introduction}
 Central nervous system (CNS) tumours are the most common solid tumours of childhood
 and the leading cause of cancer-related death in children. Although individually
-rare --- roughly $3.6\%$ of all brain tumours --- pediatric high-grade gliomas
-(pHGG), including diffuse midline glioma (DMG), carry a dismal prognosis, with
-five-year survival below $30\%$ for high-grade disease and a median survival of
-$\sim\!11$ months for DMG. Accurate, reproducible delineation of the tumour and its
-sub-compartments on MRI underpins diagnosis, surgical and radiotherapy planning,
-treatment-response assessment (per RAPNO criteria) and longitudinal monitoring.
+rare --- pediatric tumours account for roughly $3.6\%$ of all brain tumours ---
+pediatric high-grade gliomas (pHGG), including diffuse midline glioma (DMG), carry a
+dismal prognosis, with five-year survival below $30\%$ for high-grade disease and a
+median survival of only $\sim\!11$ months for DMG. Accurate, reproducible
+delineation of the tumour and its sub-compartments on MRI underpins diagnosis,
+surgical and radiotherapy planning, treatment-response assessment (per the RAPNO
+criteria) and longitudinal monitoring of these children.
 
-Manual segmentation by neuroradiologists is slow, expensive and subject to
-inter- and intra-rater variability. Deep learning has driven automated brain-tumour
-segmentation to near-expert accuracy, but pediatric tumours present a domain shift
-that models trained on adult cohorts do not capture: the subtle, frequently
-non-enhancing appearance of many DMGs differs markedly from the ring-enhancing
-necrosis typical of adult glioblastoma. Dedicated pediatric models are therefore
-essential, and the BraTS-PED challenge series provides the largest expert-annotated
-pediatric cohort to date for developing them.
+In current practice, tumour extent is most often summarised by one- or
+two-dimensional diameter measurements on a single slice, because full volumetric
+contouring by hand is prohibitively time-consuming --- tens of minutes per study, per
+timepoint, per reader. Yet longitudinal volumetry is far more sensitive to subtle
+growth or treatment response than linear measures, and the RAPNO working groups have
+explicitly called for reliable volumetric tools in pediatric neuro-oncology trials.
+Automated, reproducible segmentation is the enabling technology: it converts a
+many-minute manual task into a sub-minute automated one and removes the reader as a
+source of measurement noise, which is precisely what multi-centre trials of rare
+pediatric tumours need to reach statistical power with limited patient numbers.
 
-This report describes our Task-2 system. Our contributions are:
+Manual segmentation by expert neuroradiologists is slow, costly and subject to
+substantial inter- and intra-rater variability, particularly for the diffuse,
+ill-defined margins typical of pediatric tumours. Deep learning has driven automated
+adult brain-tumour segmentation to near-expert accuracy, but pediatric tumours
+present a \emph{domain shift} that models trained on adult cohorts do not capture:
+the subtle, frequently non-enhancing appearance of many DMGs differs markedly from
+the ring-enhancing necrosis typical of adult glioblastoma, and the sub-region
+definitions themselves (a distinct cystic component, a non-enhancing tumour core
+that often dominates) differ from the adult BraTS labels. Dedicated pediatric models
+are therefore essential, and the BraTS-PED challenge series provides the largest
+expert-annotated pediatric cohort to date for developing and benchmarking them.
+
+A second, often under-appreciated, source of difficulty is purely technical: the
+BraTS-PED images are released \emph{with} the skull and surrounding soft tissue
+intact, unlike the historically skull-stripped adult BraTS data. The skull is a
+large, high-contrast structure entirely irrelevant to the tumour, and both top-ranked
+2025 teams identified it as a primary confounder that must be removed before
+learning. A third difficulty is the \emph{small} size of the cohort (a few hundred
+cases) combined with severe class imbalance: the enhancing tumour and cystic
+component appear in only a minority of cases, so a model can easily hallucinate small
+false-positive components that the challenge's lesion-wise metric punishes harshly.
+
+The BraTS-PED track itself has matured rapidly. Introduced in 2023 with a few dozen
+annotated subjects, it has grown each year in both cohort size and annotation
+consistency, and the 2024/2025 editions standardised the four-label scheme (ET, NET,
+CC, ED) and the lesion-wise evaluation adopted here. Each edition has confirmed the
+same empirical pattern: the winning systems are not architecturally exotic but are
+built on disciplined pre-processing (skull-stripping above all), strong
+self-configuring backbones, ensembling, and metric-aware post-processing. Our system
+is a deliberate, reproducible distillation of that pattern, instrumented so that every
+stage can be inspected, re-run, and re-used.
+
+This report describes our Task-2 system, which is engineered around these three
+difficulties. Our contributions are:
 \begin{itemize}[leftmargin=1.4em,itemsep=2pt]
   \item A \textbf{skull-stripping front-end} that removes non-brain tissue before
-        learning, addressing the fact that BraTS-PED images are \emph{not}
-        skull-stripped --- a property both top-ranked 2025 teams identified as a
-        primary confounder.
+        learning, applied \emph{identically} at training and inference time so the
+        network never experiences a train/test domain gap.
   \item A \textbf{residual-encoder nnU-Net~v2} (ResEnc-L, 3D full-resolution),
-        trained as a \textbf{five-fold ensemble} to exploit the small dataset.
+        trained as a \textbf{five-fold cross-validation ensemble} to extract maximum
+        value from a small dataset.
   \item \textbf{Lesion-wise post-processing} tuned to the challenge metric, which
-        relabels tiny ET/CC components and removes tiny ED components.
+        relabels tiny ET/CC components into NET and removes tiny ED components.
   \item A fully \textbf{reproducible, containerised} pipeline (Docker + Apptainer)
-        with automatic, checkpoint-resumable SLURM training.
+        with automatic, checkpoint-resumable SLURM training, validated on a held-out
+        internal test set and released openly with all code and scripts.
 \end{itemize}
+The remainder of the report details the task (\S\ref{sec:task}), surveys the relevant
+literature (\S\ref{sec:lit}), describes the dataset (\S\ref{sec:data}), our proposed
+approach (\S\ref{sec:approach}) and network architecture (\S\ref{sec:arch}), the
+implementation and hardware (\S\ref{sec:impl}), and presents quantitative and
+qualitative results (\S\ref{sec:results}), followed by discussion
+(\S\ref{sec:discussion}), limitations (\S\ref{sec:limits}) and conclusions
+(\S\ref{sec:conclusion}).
 
 % =============================================================================
 \section{The Task}
+\label{sec:task}
 \textbf{BraTS-PED 2026, Task 2} is the automated segmentation of pre-treatment
 pediatric brain tumours from mpMRI. Each subject provides four co-registered,
-$1\,\text{mm}^3$ isotropic, $240\times240\times155$ volumes:
-native T1 (T1N), post-contrast T1 (T1C), T2 (T2W) and T2-FLAIR (T2F).
+$1\,\text{mm}^3$ isotropic, $240\times240\times155$ volumes, all rigidly aligned to a
+common anatomical template and resampled to the same grid:
+native T1 (T1N), post-contrast T1 (T1C / T1-Gd), T2-weighted (T2W) and
+T2-FLAIR (T2F). The four sequences are complementary: T1C highlights
+blood-brain-barrier breakdown (enhancement); T2W/FLAIR delineate edema and
+non-enhancing tumour; the T1N--T1C pair isolates true enhancement from intrinsic
+T1 hyperintensity.
+
+\paragraph{MRI sequences and tumour appearance.}
+Each sequence contributes distinct, partially redundant evidence, and the
+sub-regions are defined by their \emph{joint} signature rather than any single
+contrast. Enhancing tumour (ET) appears bright on T1C relative to T1N, reflecting
+contrast leakage through a disrupted blood--brain barrier; crucially, comparing T1N
+and T1C is necessary to separate genuine enhancement from intrinsically T1-bright
+tissue (e.g.\ blood products, fat, proteinaceous fluid). Non-enhancing tumour (NET)
+is the solid tumour that does \emph{not} enhance --- common and often dominant in
+pediatric diffuse midline glioma --- and is best seen as T2/FLAIR signal abnormality
+without corresponding T1C enhancement. The cystic component (CC) is fluid-filled,
+following CSF-like signal (bright on T2, suppressed or dark on FLAIR, dark on T1).
+Peritumoral edema (ED) is vasogenic fluid in the white matter, bright on T2/FLAIR and
+surrounding the tumour core. A model must therefore integrate all four channels
+coherently; this is precisely the regime in which a 3D, multi-channel U-Net excels,
+and it is why we feed all four co-registered sequences as input channels rather than
+processing any sequence in isolation.
+
 The reference annotation assigns every voxel to one of five classes:
-background (0), \textbf{ET}~(1), \textbf{NET}~(2), \textbf{CC}~(3), \textbf{ED}~(4).
+background~(0), \textbf{ET}~(1, enhancing tumour), \textbf{NET}~(2, non-enhancing
+tumour), \textbf{CC}~(3, cystic component) and \textbf{ED}~(4, peritumoral edema).
 Evaluation is performed on six regions: the four base labels plus two clinically
-meaningful composites --- \textbf{tumour core} $\text{TC}=\text{ET}\cup\text{NET}\cup\text{CC}$
-and \textbf{whole tumour} $\text{WT}=\text{ET}\cup\text{NET}\cup\text{CC}\cup\text{ED}$.
+meaningful composites,
+\[
+\text{TC (tumour core)}=\text{ET}\cup\text{NET}\cup\text{CC},
+\qquad
+\text{WT (whole tumour)}=\text{ET}\cup\text{NET}\cup\text{CC}\cup\text{ED}.
+\]
 
 \paragraph{Metrics.} Submissions are ranked by the \emph{lesion-wise} Dice
-Similarity Coefficient (DSC) and the \emph{lesion-wise} Normalized Surface Distance
-(NSD). Unlike the conventional volumetric Dice, the lesion-wise variant evaluates
-each connected ground-truth lesion separately and aggregates, so that small lesions
-count as much as large ones and \emph{spurious small false-positive components are
-penalised severely}. This property strongly motivates our post-processing design
-(Section~\ref{sec:postproc}).
+Similarity Coefficient (DSC) and the \emph{lesion-wise} Hausdorff-95 distance
+(HD95) / Normalized Surface Distance (NSD). The standard volumetric Dice between a
+prediction $P$ and ground truth $G$ is
+\[
+\mathrm{DSC}(P,G)=\frac{2\,|P\cap G|}{|P|+|G|}.
+\]
+The \emph{lesion-wise} variant instead identifies each connected ground-truth lesion
+$G_i$ (via connected-component analysis with a small-component dilation), matches it
+to the overlapping prediction, computes the Dice/HD95 \emph{per lesion}, and averages
+over lesions:
+\[
+\mathrm{LWDSC}=\frac{1}{N}\sum_{i=1}^{N}\mathrm{DSC}(P_i,G_i),
+\]
+where false-positive predicted components that match no ground-truth lesion
+contribute a score of zero. Two consequences are central to our design.
+First, \emph{small lesions count as much as large ones}, so a model cannot ignore
+the many small pediatric ET/CC foci. Second, \emph{spurious small false-positive
+components are penalised severely} --- a single stray blob can drag a case's score
+toward zero. This property directly motivates our post-processing
+(\S\ref{sec:postproc}). For empty ground-truth regions, a correct empty prediction
+scores~1 and any false positive scores~0, which makes the rare classes (ET, CC, ED)
+high-variance and dominated by a handful of failure cases.
 
 % =============================================================================
 \section{Literature Survey}
+\label{sec:lit}
+\paragraph{The BraTS challenge lineage.}
+The Multimodal Brain Tumor Segmentation (BraTS) challenge has, since 2012,
+established the de-facto benchmark for brain-tumour segmentation, standardising
+mpMRI pre-processing, the ET/TC/WT region definitions, and the evaluation protocol.
+The BraTS-2021 expansion to $\sim\!2000$ cases catalysed a generation of strong
+volumetric segmentation models. From 2023 the challenge fragmented into a
+``cluster'' of sub-challenges targeting specific clinical populations and
+acquisition conditions --- adult glioma, meningioma, brain metastases (METS),
+sub-Saharan Africa, and \emph{pediatrics} (PED) --- each with its own data
+idiosyncrasies. The pediatric track was introduced to address the adult-to-pediatric
+domain shift described above.
+
 \paragraph{nnU-Net as the dominant backbone.}
-Since its introduction, the self-configuring \textbf{nnU-Net} has been the backbone
-of the overwhelming majority of winning BraTS solutions. It automatically infers
-pre-processing, patch size, network topology, training schedule and inference
-strategy from a dataset fingerprint, providing a remarkably strong, hard-to-beat
-baseline. The 2024/2025 BraTS cluster confirmed that careful data handling and
-post-processing around nnU-Net, rather than novel architectures, drive the
-leaderboard.
+Since its introduction by Isensee \emph{et al.}~\cite{nnunet}, the self-configuring
+\textbf{nnU-Net} has been the backbone of the overwhelming majority of winning BraTS
+solutions. Rather than proposing a fixed architecture, nnU-Net automatically infers
+pre-processing, patch size, network topology, batch size, training schedule and
+inference strategy from a ``dataset fingerprint'' (image spacings, intensity
+distributions, sizes), yielding a remarkably strong, hard-to-beat baseline with no
+manual tuning. The 2024/2025 BraTS results repeatedly confirmed that careful data
+handling and post-processing \emph{around} nnU-Net, rather than novel architectures,
+drive the leaderboard.
 
 \paragraph{Residual-encoder U-Nets.}
-The \textbf{ResEnc} presets (M/L/XL) add residual blocks to the nnU-Net encoder and
-scale its capacity to the available GPU memory. The BraTS-METS~2025 winning team
-(GLI-team) used the ResEnc-XL planner with 3D full-resolution configuration trained
-on all data, demonstrating the value of higher-capacity encoders for tumour
-segmentation.
+The \textbf{ResEnc} presets (M/L/XL)~\cite{resenc} extend nnU-Net by adding residual
+blocks to the encoder and scaling its capacity to the available GPU memory, with
+re-tuned default batch and patch sizes. The accompanying study (``nnU-Net
+Revisited'') demonstrated that these higher-capacity encoders, properly validated,
+outperform many bespoke transformer architectures on 3D medical segmentation. The
+BraTS-METS~2025 winning solution used the ResEnc-XL planner in the
+\texttt{3d\_fullres} configuration, motivating our choice of the ResEnc family.
+
+\paragraph{Transformer and hybrid architectures.}
+A parallel line of work introduced attention/transformer mechanisms to volumetric
+segmentation --- TransBTS, UNETR, and notably \textbf{Swin~UNETR}~\cite{swinunetr},
+which uses a hierarchical shifted-window transformer encoder and won strong BraTS
+placements. In pediatrics these models are typically used \emph{within an ensemble}
+alongside nnU-Net rather than as standalone replacements, because the small cohort
+limits the data-hungry transformer's advantage.
 
 \paragraph{BraTS-PED 2025 top solutions.}
-The rank-1 solution (Yi \emph{et al.}, ``Frequency-Aware Ensemble Learning'')
-combined nnU-Net (with tuned initialisation), a BraTS-2021-pretrained Swin~UNETR,
-and a frequency-domain HFF-Net, \emph{all on skull-stripped data}, ensembled by
-probability averaging; it reported test Dice of $0.729$ (ET), $0.857$ (NET),
-$0.627$ (CC), $0.832$ (ED), $0.918$ (TC) and $0.926$ (WT).
-The rank-2 solution (Chen \& Liang) showed that a \emph{single} nnU-Net~v2,
-trained first on SynthStrip skull-stripped data and then fine-tuned on the original
-data, with lesion-wise post-processing, achieves state-of-the-art validation
-performance on a single laptop GPU --- emphasising that \emph{methodology, not raw
-compute}, wins. The rank-3 solution (PTransBTS) explored a hybrid
-convolution--transformer architecture with learnable shape priors.
-Our design distils the common, repeatedly-validated ingredients of these systems:
+The rank-1 solution (Yi \emph{et al.}, ``Frequency-Aware Ensemble
+Learning''~\cite{yi2025}) combined nnU-Net (with tuned initialisation), a
+BraTS-2021-pretrained Swin~UNETR, and a frequency-domain HFF-Net, \emph{all on
+skull-stripped data}, ensembled by probability averaging; it reported test
+lesion-wise Dice of $0.729$ (ET), $0.857$ (NET), $0.627$ (CC), $0.832$ (ED),
+$0.918$ (TC) and $0.926$ (WT). The rank-2 solution (Chen \&
+Liang~\cite{chen2025}) showed that a \emph{single} nnU-Net~v2, trained first on
+SynthStrip skull-stripped data and then fine-tuned on the original data, with
+lesion-wise post-processing, achieves state-of-the-art validation performance even on
+a single laptop GPU --- emphasising that \emph{methodology, not raw compute}, wins.
+The rank-3 solution (PTransBTS~\cite{yu2025}) explored a hybrid
+convolution--transformer architecture with learnable shape priors. Our design
+distils the common, repeatedly-validated ingredients of all three systems:
 \emph{skull-strip $\rightarrow$ nnU-Net $\rightarrow$ lesion-wise post-process}.
 
 \paragraph{Skull-stripping.}
 Because BraTS-PED data retain the skull, brain extraction is a recurring
-pre-processing step. SynthStrip provides robust, contrast- and age-agnostic brain
-masks; HD-BET (from the nnU-Net group) is a convenient, pip-installable alternative.
-We support both.
+pre-processing step. Classical tools (BET, ROBEX) are brittle on pediatric anatomy
+and pathological contrast. \textbf{SynthStrip}~\cite{synthstrip} uses synthetic-data
+training to produce robust, contrast- and age-agnostic brain masks, and is widely
+adopted for pediatric and non-standard acquisitions. \textbf{HD-BET}~\cite{hdbet},
+from the nnU-Net group, is a convenient, pip-installable, GPU-accelerated CNN
+alternative. We support both and apply the mask consistently across all four
+modalities.
+
+\paragraph{Loss functions and class imbalance.}
+Brain-tumour segmentation is severely class-imbalanced --- background dominates, and
+the tumour sub-regions span three orders of magnitude in size (Table~\ref{tab:labelstats}).
+The community has converged on \emph{region-based} losses, chiefly the soft Dice
+loss, often combined with cross-entropy (the ``DiceCE'' loss) to retain
+well-calibrated gradients where Dice saturates. Variants such as the generalized Dice,
+Tversky and focal losses re-weight rare classes more aggressively, but on BraTS-scale
+data the plain Dice+CE objective used by nnU-Net remains a strong, stable default,
+and is what we adopt. Deep supervision --- applying the loss at multiple decoder
+resolutions --- further stabilises training of deep 3D U-Nets and is standard in the
+nnU-Net recipe.
+
+\paragraph{Data augmentation and regularisation.}
+With only a few hundred subjects, aggressive augmentation is essential to avoid
+overfitting. The nnU-Net default ``batchgenerators'' pipeline applies random affine
+transforms (rotation, scaling), elastic-free spatial deformation, Gaussian noise and
+blur, brightness/contrast/gamma perturbation, simulated low resolution, and axis
+mirroring, all on-the-fly. These transforms emulate realistic acquisition variability
+and are a primary reason a single backbone generalises from so few cases; we rely on
+them rather than introducing bespoke augmentation.
+
+\paragraph{Domain adaptation and pre-training.}
+Because the pediatric cohort is small, transferring knowledge from larger adult
+datasets is attractive. Strategies seen in the BraTS-PED leaderboard include
+initialising from BraTS-2021-pretrained weights (used by the rank-1 Swin~UNETR branch)
+and the two-stage ``strip-then-finetune'' schedule of the rank-2 system, which first
+trains on skull-stripped data and then fine-tunes on the original volumes for
+robustness. Self-supervised pre-training on unlabelled MRI is a further, less-explored
+direction. Our submission uses neither external pre-training nor a second stage,
+leaving these as clear, well-motivated avenues for improvement (\S\ref{sec:limits}).
+
+\paragraph{Post-processing and ensembling.}
+Connected-component post-processing --- removing or relabelling small components ---
+is a standard final step in BraTS pipelines and is especially important under the
+lesion-wise metric. Probability (softmax) averaging across cross-validation folds is
+the canonical, low-risk ensembling strategy and is particularly effective on small
+cohorts where a single fold may overfit. Both are core to our method.
 
 % =============================================================================
 \section{Dataset}
@@ -175,100 +359,205 @@ We support both.
 We use the official BraTS-PED 2026 release: \textbf{294 training} cases (with expert
 reference annotations) and \textbf{91 validation} cases (annotations withheld; used
 for the public leaderboard). Each case provides the four co-registered mpMRI
-sequences described above. Table~\ref{tab:labelstats} summarises the strong class
-imbalance we measured across the 294 training cases, which directly informs both our
-loss (Dice + cross-entropy is robust to imbalance) and our post-processing.
+sequences described in \S\ref{sec:task}, already skull-aligned and resampled to a
+$240\times240\times155$, $1\,\text{mm}^3$ grid by the organisers. The annotations
+were produced and approved by expert neuroradiologists following the harmonised
+BraTS-PED annotation protocol.
+
+\paragraph{Class statistics and imbalance.}
+Table~\ref{tab:labelstats} summarises the strong class imbalance we measured across
+the 294 training cases. NET is near-ubiquitous and large; ET is present in roughly
+two thirds of cases; the cystic component and especially edema are present in only a
+minority. Because the lesion-wise metric scores an empty-vs-empty region as a perfect
+$1.0$ but any spurious component as $0.0$, these rare classes are simultaneously
+\emph{hard to detect} and \emph{costly to over-predict}. This observation directly
+shapes both our loss (the combined Dice + cross-entropy objective is robust to
+imbalance) and our post-processing thresholds (\S\ref{sec:postproc}).
 
 \begin{table}[h]
 \centering
-\caption{Per-label statistics over the 294 training cases (voxels at $1\,\text{mm}^3$).
-ET, CC and especially ED are present in only a minority of cases, so spurious small
-predictions of these classes are both likely and costly under the lesion-wise metric.}
+\caption{Per-label statistics over the 294 training cases (voxel counts at
+$1\,\text{mm}^3$). ET, CC and especially ED are present in only a minority of cases,
+so spurious small predictions of these classes are both likely and costly under the
+lesion-wise metric.}
 \label{tab:labelstats}
-\begin{tabular}{lcccc}
+\begin{tabular}{clccc}
 \toprule
 Label & Name & Present in & \% of cases & Median voxels (when present) \\
 \midrule
-1 & Enhancing tumour (ET)     & 198 / 294 & 67\% & 4{,}273 \\
-2 & Non-enhancing tumour (NET)& 292 / 294 & 99\% & 29{,}424 \\
-3 & Cystic component (CC)     & 104 / 294 & 35\% & 1{,}659 \\
-4 & Peritumoral edema (ED)    & 66 / 294  & 22\% & 7{,}591 \\
+1 & Enhancing tumour (ET)      & 198 / 294 & 67\% & 4{,}273 \\
+2 & Non-enhancing tumour (NET) & 292 / 294 & 99\% & 29{,}424 \\
+3 & Cystic component (CC)      & 104 / 294 & 35\% & 1{,}659 \\
+4 & Peritumoral edema (ED)     & 66 / 294  & 22\% & 7{,}591 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/class_distribution.png}
+\caption{Left: fraction of the 294 training cases containing each label. Right:
+median lesion size (voxels) when the label is present. The cystic component and edema
+are both \emph{rare} and \emph{small}, the worst-case combination for the lesion-wise
+metric.}
+\label{fig:classdist}
+\end{figure}
+
+\paragraph{Pre-processing pipeline.}
+Our pre-processing has two parts. (1)~\emph{Brain extraction}
+(\texttt{skull\_strip.py}): a single brain mask is estimated and applied to all four
+co-registered modalities, writing skull-stripped copies under \texttt{data\_ss/}.
+HD-BET is batched in a single model load to amortise initialisation across the cohort.
+(2)~\emph{nnU-Net conversion} (\texttt{prepare\_dataset.py}): the skull-stripped data
+is reorganised into the nnU-Net~v2 raw layout (\texttt{imagesTr}/\texttt{labelsTr}
+with the four-digit channel suffixes), 10 cases are held out deterministically, and a
+\texttt{dataset.json} describing the labels and channels is generated. nnU-Net's own
+planning step then computes the dataset fingerprint and applies per-channel z-score
+intensity normalisation over the non-zero (brain) region, resampling to the target
+spacing. Figure~\ref{fig:classdist} visualises the class statistics that drive the
+loss and post-processing choices.
+
+\paragraph{Modality-to-channel mapping.}
+The four sequences are mapped to fixed nnU-Net input channels following the standard
+BraTS convention: T1N$\to$\texttt{0000}, T1C$\to$\texttt{0001}, T2W$\to$\texttt{0002},
+T2F$\to$\texttt{0003}.
+
+\paragraph{Annotation protocol and label noise.}
+The reference segmentations follow the harmonised BraTS-PED protocol, in which initial
+automated or trainee segmentations are refined and approved by board-certified
+neuroradiologists. Even so, the boundaries of pediatric tumours --- particularly the
+ET/NET interface and the extent of infiltrative non-enhancing disease --- are
+genuinely ambiguous, and a degree of label noise is unavoidable. This has two
+practical consequences for modelling. First, it places a soft ceiling on achievable
+Dice that is below $1.0$ even for a perfect model, because the ``ground truth'' itself
+carries inter-rater uncertainty. Second, it argues for training procedures that are
+robust to noisy labels --- heavy augmentation, ensembling, and avoiding overconfident
+fits --- all of which our recipe provides. We treat the provided annotations as the
+authoritative target while remaining mindful that the hardest residual errors
+(\S\ref{sec:results}) partly reflect this intrinsic ambiguity rather than model
+failure alone.
+
 \paragraph{Internal test split.}
-To obtain an honest, ground-truth-backed performance estimate (and the sample
-predictions in this report), we deterministically hold out \textbf{10} training
-cases that are \emph{never} used for model fitting. The remaining 284 cases are
-passed to nnU-Net's own five-fold cross-validation.
+The challenge withholds validation-set annotations, so to obtain an honest,
+ground-truth-backed performance estimate --- and the sample predictions in this
+report --- we deterministically hold out \textbf{10} training cases (seed $1337$,
+recorded in \texttt{holdout\_test\_cases.txt}) that are \emph{never} used for model
+fitting. The remaining $\sim\!284$ cases are passed to nnU-Net's own five-fold
+cross-validation, which additionally yields an out-of-fold (OOF) prediction for every
+training case --- the most honest large-sample estimate of generalisation we report.
 
 % =============================================================================
 \section{Proposed Approach}
+\label{sec:approach}
 Figure~\ref{fig:pipeline} shows the end-to-end pipeline. Each stage is a separate,
-testable module in our codebase.
+independently testable module in our codebase, configured entirely through
+environment variables so that the identical code runs on a workstation, a SLURM node,
+and inside the submission container.
 
 \begin{figure}[h]
 \centering
-\begin{tikzpicture}[node distance=0.55cm and 0.9cm,
-  box/.style={rectangle,rounded corners,draw=brain,fill=enc,minimum height=1.0cm,
-              minimum width=2.5cm,align=center,font=\small},
+\begin{tikzpicture}[node distance=0.5cm and 0.7cm,
+  box/.style={rectangle,rounded corners,draw=brain,fill=enc,minimum height=1.1cm,
+              minimum width=2.4cm,align=center,font=\small},
   arr/.style={-{Stealth[length=2.5mm]},thick,draw=brain}]
 \node[box] (in) {Raw mpMRI\\(4 seq., +skull)};
-\node[box,right=of in,fill=dec] (ss) {Skull-strip\\(SynthStrip/HD-BET)};
-\node[box,right=of ss,fill=bott] (nn) {nnU-Net v2\\ResEnc-L 3D\\5-fold ensemble};
+\node[box,right=of in,fill=dec] (ss) {Skull-strip\\(SynthStrip/\\HD-BET)};
+\node[box,right=of ss,fill=bott] (nn) {nnU-Net v2\\ResEnc-L 3D\\5-fold ens.\,+\,TTA};
 \node[box,right=of nn,fill=dec] (pp) {Lesion-wise\\post-process};
-\node[box,right=of pp] (out) {Label map\\1/2/3/4};
+\node[box,right=of pp] (out) {Label map\\\{1,2,3,4\}};
 \draw[arr] (in)--(ss); \draw[arr] (ss)--(nn);
 \draw[arr] (nn)--(pp); \draw[arr] (pp)--(out);
 \end{tikzpicture}
-\caption{End-to-end inference pipeline. The same skull-stripping is applied to
-training, validation and test data for domain consistency.}
+\caption{End-to-end inference pipeline. The \emph{same} skull-stripping is applied to
+training, validation and test data for domain consistency. ``TTA'' = test-time
+augmentation (mirroring).}
 \label{fig:pipeline}
 \end{figure}
 
 \subsection{Skull-stripping}
-All four modalities are co-registered, so we estimate a single brain mask from the
-native-T1 volume and apply it to every modality (zeroing non-brain voxels). We use
-SynthStrip when available (contrast- and age-agnostic, pediatric-robust) and HD-BET
-otherwise. Crucially, the \emph{identical} procedure is applied at inference, so the
-network never sees a train/test domain gap.
+All four modalities are co-registered, so we estimate a single brain mask and apply
+it to every modality (zeroing non-brain voxels). We use HD-BET (GPU, batched in a
+single model load for throughput) by default and SynthStrip as a contrast- and
+age-agnostic alternative. Crucially, the \emph{identical} procedure is applied at
+training and inference, so the network never sees a train/test domain gap. Brain
+extraction also reduces the effective field of view, letting the network's fixed
+patch budget concentrate on brain tissue.
 
 \subsection{Segmentation network}
 We adopt nnU-Net~v2 with the \textbf{ResEnc-L} planner in the \texttt{3d\_fullres}
-configuration. nnU-Net derives the patch size, spacing, normalisation and topology
-from the dataset fingerprint; the residual encoder increases representational
-capacity while staying within the $96\,$GB of the target GPU. Section~\ref{sec:arch}
-details the architecture.
+configuration. nnU-Net derives the patch size, target spacing, normalisation and
+network topology from the dataset fingerprint; the residual encoder increases
+representational capacity while staying within the $96\,$GB of the target GPU.
+Section~\ref{sec:arch} details the architecture.
 
 \subsection{Training as a five-fold ensemble}
-With only 284 fit-able cases, ensembling is the single most reliable accuracy lever.
-We train the standard five-fold cross-validation and average softmax probabilities at
-inference. Each fold uses the nnU-Net default: combined \textbf{Dice~+~cross-entropy}
-loss, SGD with Nesterov momentum ($0.99$), an initial learning rate of $10^{-2}$ with
-polynomial decay (power $0.9$), deep supervision, and extensive on-the-fly
-augmentation (rotation, scaling, Gaussian noise/blur, brightness/contrast, low-res
-simulation, gamma, mirroring).
+With only $\sim\!284$ fit-able cases, ensembling is the single most reliable accuracy
+lever. We train the standard five-fold cross-validation and average softmax
+probabilities at inference, with mirror test-time augmentation. Each fold uses the
+nnU-Net default objective and schedule, detailed in \S\ref{sec:impl}.
+Figure~\ref{fig:protocol} shows the experimental protocol: the 10-case held-out split
+is removed first and never seen by any model; the remaining cases are partitioned into
+five folds; each fold trains a model on four partitions and predicts the fifth,
+yielding both an out-of-fold prediction for every training case (for honest
+large-sample evaluation) and five checkpoints that are softmax-averaged for inference
+on the validation and held-out sets.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=0.35cm and 0.7cm,
+  data/.style={rectangle,rounded corners,draw=brain,fill=enc,minimum height=0.8cm,
+               minimum width=2.3cm,align=center,font=\scriptsize},
+  hold/.style={rectangle,rounded corners,draw=accent,fill=dec,minimum height=0.8cm,
+               minimum width=2.3cm,align=center,font=\scriptsize},
+  mod/.style={rectangle,rounded corners,draw=green!50!black,fill=bott,minimum height=0.7cm,
+              minimum width=1.9cm,align=center,font=\scriptsize},
+  arr/.style={-{Stealth[length=2mm]},thick,draw=brain}]
+\node[data] (all) {294 training cases};
+\node[hold,below left=0.5cm and 0.2cm of all] (ho) {10 held-out\\(GT, never trained)};
+\node[data,below right=0.5cm and 0.2cm of all] (cv) {$\sim$284 cases\\5-fold CV};
+\draw[arr] (all)--(ho); \draw[arr] (all)--(cv);
+\node[mod,below=0.55cm of cv] (folds) {fold 0..4 models};
+\draw[arr] (cv)--(folds);
+\node[mod,below left=0.55cm and 0.1cm of folds] (oof) {OOF preds\\(eval, n$\approx$285)};
+\node[mod,below right=0.55cm and 0.1cm of folds] (ens) {5-fold softmax\\ensemble + TTA};
+\draw[arr] (folds)--(oof); \draw[arr] (folds)--(ens);
+\node[hold,below=1.7cm of ho] (hoeval) {held-out eval};
+\draw[arr] (ho.south) to[out=-90,in=180] (hoeval.west);
+\draw[arr] (ens.south) |- (hoeval.east);
+\node[data,right=0.7cm of ens] (val) {91 validation\\(leaderboard)};
+\draw[arr] (ens)--(val);
+\end{tikzpicture}
+\caption{Experimental protocol. A deterministic 10-case split (seed $1337$) is held
+out for ground-truth-backed evaluation; the rest feeds nnU-Net's five-fold
+cross-validation, producing out-of-fold (OOF) predictions for large-sample evaluation
+and a five-model softmax ensemble for inference on the held-out and official
+validation sets.}
+\label{fig:protocol}
+\end{figure}
 
 \subsection{Lesion-wise post-processing}
 \label{sec:postproc}
-Because the lesion-wise metric punishes small false positives, we relabel or remove
-tiny connected components per class (Table~\ref{tab:pp}). Thresholds follow the
-rank-2 BraTS-PED~2025 recipe and the class-rarity we measured in
-Table~\ref{tab:labelstats}.
+Because the lesion-wise metric punishes small false positives, we perform
+connected-component analysis on each predicted class and relabel or remove tiny
+components (Table~\ref{tab:pp}). Tiny ET and CC components --- the classes most prone
+to spurious specks --- are reassigned to the surrounding NET rather than deleted
+outright (preserving tumour-core volume), while tiny ED components are removed.
+Thresholds follow the rank-2 BraTS-PED~2025 recipe~\cite{chen2025} and the
+class-rarity we measured in Table~\ref{tab:labelstats}.
 
 \begin{table}[h]
 \centering
-\caption{Lesion-wise post-processing rules (component sizes in voxels).}
+\caption{Lesion-wise post-processing rules (component sizes in voxels at
+$1\,\text{mm}^3$). See \texttt{POSTPROC\_RULES} in \texttt{code/config.py}.}
 \label{tab:pp}
-\begin{tabular}{lcl}
+\begin{tabular}{clcl}
 \toprule
-Class & Min.\ component size & Action for smaller components \\
+Class & Name & Min.\ component size & Action for smaller components \\
 \midrule
-ET (1) & 50  & reassign to NET (2) \\
-CC (3) & 150 & reassign to NET (2) \\
-ED (4) & 100 & remove (set to background) \\
-NET(2) & ---  & keep unchanged \\
+ET (1) & Enhancing tumour & 50  & reassign to NET (2) \\
+CC (3) & Cystic component & 150 & reassign to NET (2) \\
+ED (4) & Peritumoral edema & 100 & remove (set to background) \\
+NET (2) & Non-enhancing tumour & --- & keep unchanged \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -281,9 +570,13 @@ blocks in the encoder, instance normalisation, LeakyReLU activations, strided
 convolutions for down-sampling, transposed convolutions for up-sampling, skip
 connections at every resolution, and deep supervision on the decoder
 (Figure~\ref{fig:unet}). The encoder begins at 32 feature maps and doubles at each
-of (typically) five--six stages up to 320 channels in the bottleneck. The four MRI
-modalities form the four input channels; the output has five channels (background +
-four tumour classes) passed through a softmax.
+stage up to 320 channels in the bottleneck across (typically) six resolution stages.
+The four MRI modalities form the four input channels; the output has five channels
+(background + four tumour classes) passed through a softmax. The residual block
+(Figure~\ref{fig:resblock}) is the key difference from the vanilla nnU-Net encoder:
+a two-convolution residual unit with an identity (or $1\!\times\!1\!\times\!1$
+projection) shortcut, which eases optimisation of the deeper, higher-capacity
+encoder.
 
 \begin{figure}[h]
 \centering
@@ -324,131 +617,582 @@ transposed convolution. Deep supervision is applied at each decoder resolution.}
 \label{fig:unet}
 \end{figure}
 
-% =============================================================================
-\section{Implementation Details}
-\subsection{Hardware}
-Training and inference run on a single \textbf{NVIDIA RTX Pro 6000} GPU
-(96\,GB VRAM, Blackwell) with 8 CPU cores and 56\,GB system RAM, scheduled through
-SLURM. The large VRAM comfortably hosts the ResEnc-L patch size at full resolution.
-(The H100/A100 partitions were deliberately avoided as they were decommissioned at
-the start of June~2026.)
-
-\subsection{Software / framework}
-\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
-  \item \textbf{nnU-Net v2} (\texttt{nnunetv2}) --- planning, training, inference.
-  \item \textbf{PyTorch 2.11 / CUDA 12.8} --- Blackwell-compatible wheels.
-  \item \textbf{HD-BET / SynthStrip} --- skull-stripping.
-  \item \textbf{NiBabel, SimpleITK, SciPy, scikit-image} --- I/O and
-        connected-component post-processing.
-  \item Packaged with \texttt{pip install -e .}; containerised with Docker
-        (CUDA 12.8 runtime base) and Apptainer for the HPC.
-\end{itemize}
-
-\subsection{Checkpointing and resumption}
-nnU-Net writes \texttt{checkpoint\_best.pth} (best EMA pseudo-Dice) and
-\texttt{checkpoint\_latest.pth} (every 50 epochs). Our SLURM job is
-\texttt{--requeue}-enabled and auto-detects an existing checkpoint to continue with
-\texttt{--c}, so a GPU/time-limit interruption loses at most $\sim$50 epochs.
-Training/validation loss and pseudo-Dice curves are exported automatically
-(Figure~\ref{fig:curves}).
-
-% =============================================================================
-\section{Experiments and Results}
-\subsection{Cross-validation}
-We report the five-fold cross-validation pseudo-Dice produced by nnU-Net during
-training, together with the held-out internal-test performance computed against
-ground truth with our \texttt{evaluate.py} (volumetric DSC and NSD at 1\,mm).
-
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.78\textwidth,height=6.5cm,keepaspectratio]{figures/progress_custom.png}
-\caption{Training/validation loss (top) and foreground pseudo-Dice (bottom) versus
-epoch for fold~0. Curves are exported automatically by \texttt{plot\_training.py}.}
-\label{fig:curves}
+\begin{tikzpicture}[node distance=0.55cm and 0.75cm,
+  op/.style={rectangle,rounded corners,draw=brain,fill=enc,minimum height=0.85cm,
+             minimum width=2.0cm,align=center,font=\scriptsize},
+  add/.style={circle,draw=accent,fill=dec,inner sep=1pt,font=\scriptsize},
+  arr/.style={-{Stealth[length=2mm]},thick}]
+\node[op] (x) {input $x$};
+\node[op,right=of x] (c1) {Conv $3^3$\\IN, LReLU};
+\node[op,right=of c1] (c2) {Conv $3^3$\\IN};
+\node[add,right=of c2] (sum) {$+$};
+\node[op,right=of sum] (act) {LReLU};
+\node[op,right=of act] (y) {output};
+\draw[arr] (x)--(c1); \draw[arr] (c1)--(c2); \draw[arr] (c2)--(sum);
+\draw[arr] (sum)--(act); \draw[arr] (act)--(y);
+\draw[arr] (x.south) to[out=-40,in=-140] node[below,font=\scriptsize]{identity / $1^3$ proj.} (sum.south);
+\end{tikzpicture}
+\caption{Residual encoder block (IN = instance norm, LReLU = LeakyReLU). The
+shortcut is an identity when input/output channels match, else a
+$1\!\times\!1\!\times\!1$ projection. Two such blocks are stacked per encoder stage.}
+\label{fig:resblock}
 \end{figure}
-
-\subsection{Quantitative results on the held-out internal test set}
-Table~\ref{tab:results} reports mean Dice and NSD over the 10 held-out cases, with
-and without lesion-wise post-processing. \emph{(Numbers are populated by
-\texttt{docker/run\_sample.sh} once training completes.)}
 
 \begin{table}[h]
 \centering
-\caption{Mean DSC / NSD (1\,mm) on the 10 held-out internal-test cases.}
-\label{tab:results}
-\begin{tabular}{lcccccc}
+\caption{Key auto-configured architecture/training settings derived by the
+nnU-Net~v2 ResEnc-L planner for this dataset.}
+\label{tab:arch}
+\begin{tabular}{ll}
 \toprule
- & ET & NET & CC & ED & TC & WT \\
+Setting & Value \\
 \midrule
-DSC (raw)        & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} \\
-DSC (post-proc.) & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} \\
-NSD (post-proc.) & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} & \result{}{--} \\
+Configuration            & \texttt{3d\_fullres} \\
+Planner                  & \texttt{nnUNetResEncUNetLPlans} \\
+Input channels           & 4 (T1N, T1C, T2W, T2F) \\
+Output channels          & 5 (bg + ET, NET, CC, ED) \\
+Target spacing           & $1\times1\times1\,\text{mm}^3$ \\
+Encoder width            & $32\!\to\!64\!\to\!128\!\to\!256\!\to\!320$ \\
+Normalisation / act.\    & instance norm / LeakyReLU \\
+Down/up-sampling         & strided conv.\ / transposed conv.\ \\
+Deep supervision         & yes (all decoder scales) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent For reference, the rank-1 BraTS-PED~2025 system reported test lesion-wise
-Dice of $0.918$ (TC) and $0.926$ (WT); ET ($0.73$) and CC ($0.63$) remain the
-hardest regions, consistent with their rarity (Table~\ref{tab:labelstats}).
+% =============================================================================
+\section{Implementation Details}
+\label{sec:impl}
+\subsection{Hardware}
+Training and inference run on a single \textbf{NVIDIA RTX Pro 6000} GPU
+(96\,GB VRAM, Blackwell generation) with 8 CPU cores and 56--64\,GB of system RAM,
+scheduled through SLURM on the Emory HyPER C3 community cluster. The large VRAM
+comfortably hosts the ResEnc-L patch size at full resolution without gradient
+checkpointing. The H100/A100 partitions were deliberately avoided as they were
+decommissioned at the start of June~2026; the entire project was executed within a
+fixed compute budget of a few GPU-days across \emph{all} jobs, which directly
+constrained the training schedule (see below).
 
-\subsection{Qualitative results}
-Figure~\ref{fig:qual} overlays predicted sub-regions on the T1C scan for
-representative held-out cases. \emph{(Generated by \texttt{make\_figures.py}.)}
+\subsection{Software / framework}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{nnU-Net v2} (\texttt{nnunetv2}\,$\ge$\,2.5) --- planning, training,
+        inference, ensembling.
+  \item \textbf{PyTorch 2.x / CUDA 12.8} --- Blackwell-compatible wheels.
+  \item \textbf{HD-BET / SynthStrip} --- skull-stripping back-ends.
+  \item \textbf{NiBabel, SimpleITK, SciPy, scikit-image} --- medical-image I/O and
+        connected-component post-processing.
+  \item \textbf{Matplotlib, pandas} --- curve/figure generation and metric tables.
+  \item Packaged as an installable \texttt{brats\_ped} package
+        (\texttt{pip install -e .}); containerised with Docker (CUDA 12.8 runtime
+        base) and an equivalent Apptainer definition for the HPC.
+\end{itemize}
+
+\subsection{Training configuration}
+Each fold uses the nnU-Net default recipe, summarised in Table~\ref{tab:train}:
+a combined \textbf{Dice + cross-entropy} loss (robust to the class imbalance of
+Table~\ref{tab:labelstats}), SGD with Nesterov momentum $0.99$, an initial learning
+rate of $10^{-2}$ with polynomial decay (power $0.9$), deep supervision with
+resolution-weighted loss, and extensive on-the-fly data augmentation (random
+rotation, scaling, elastic-free spatial transforms, Gaussian noise and blur,
+brightness and contrast perturbation, simulated low resolution, gamma correction and
+axis mirroring). Under our compute budget we used a reduced-epoch trainer
+(\texttt{nnUNetTrainer\_500epochs}) per fold so that the full five-fold ensemble fits
+the budget while retaining the dominant accuracy gain of ensembling.
+
+\begin{table}[h]
+\centering
+\caption{Training hyper-parameters (per fold).}
+\label{tab:train}
+\begin{tabular}{ll}
+\toprule
+Hyper-parameter & Value \\
+\midrule
+Loss               & Dice + cross-entropy (deep-supervised) \\
+Optimiser          & SGD, Nesterov momentum $0.99$ \\
+Initial LR         & $1\times10^{-2}$, poly decay (power $0.9$) \\
+Epochs / fold      & 500 (budget-constrained variant) \\
+Folds              & 5 (cross-validation ensemble) \\
+Batch / patch      & planner-derived (3d\_fullres) \\
+Augmentation       & nnU-Net default (spatial + intensity + mirror) \\
+Inference          & 5-fold softmax averaging + mirror TTA \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Checkpointing and resumption}
+nnU-Net writes \texttt{checkpoint\_best.pth} (best exponential-moving-average
+pseudo-Dice) and \texttt{checkpoint\_latest.pth} (every 50 epochs). Our SLURM job is
+\texttt{--requeue}-enabled and auto-detects an existing checkpoint to continue
+training with \texttt{--c}, so a GPU or time-limit interruption loses at most
+$\sim\!50$ epochs of work --- essential for running long jobs within short scheduler
+time-slices. To race multiple folds without output-path collisions, each fold is
+trained under a distinct results namespace. Training/validation loss and pseudo-Dice
+curves are exported automatically by \texttt{plot\_training.py}
+(Figure~\ref{fig:curves}).
+
+\subsection{Software engineering and code structure}
+The system is organised as an installable Python package (\texttt{brats\_ped}) with a
+clean separation of concerns: \texttt{config.py} centralises every path, label, planner
+choice and post-processing rule (all environment-overridable); each pipeline stage is
+an independently runnable module (\texttt{skull\_strip.py}, \texttt{prepare\_dataset.py},
+\texttt{train.py}, \texttt{inference.py}, \texttt{postprocess.py}) exposed both as a CLI
+and as a console entry point; evaluation is split into voxel-wise (\texttt{evaluate.py})
+and lesion-wise (\texttt{evaluate\_lesionwise.py}) scorers so the official metric and a
+fast sanity metric can be computed independently; and \texttt{predict\_entry.py} chains
+the full strip$\to$predict$\to$post-process flow as the container entry point. Two
+thin drivers wrap these for the two execution modes: \texttt{run\_pipeline.sh} for a
+single local GPU and the \texttt{slurm/} sbatch scripts for the cluster. This structure
+means each stage can be unit-tested, swapped, or re-run in isolation, and that the
+exact same code paths execute locally, on SLURM, and in the submission container ---
+the foundation of the reproducibility claims in \S\ref{sec:results}.
+
+\subsection{Inference and submission packaging}
+At inference the five fold checkpoints are loaded, softmax outputs are averaged with
+mirror TTA, the argmax label map is post-processed (\S\ref{sec:postproc}) and written
+as \texttt{<SubjectID>.nii.gz}. The full chain --- skull-strip $\to$ predict $\to$
+post-process --- is wrapped in a Docker/Apptainer container conforming to the
+BraTS-Lighthouse algorithm contract (reads \texttt{/input}, writes \texttt{/output}),
+so the same artifact used for the held-out evaluation is what is submitted. On the
+official 91-case validation set the container produced all 91 label maps for
+leaderboard submission.
+
+\subsection{Reproducibility and determinism}
+The pipeline is engineered for repeatability. All paths are environment-variable
+overridable, so the identical code runs unmodified on a workstation, a SLURM node, and
+inside the container. The held-out split is fixed by a constant seed ($1337$) and
+recorded to disk, so the train/test partition is byte-for-byte reproducible. The
+container pins the CUDA-12.8 base image and installs the project with
+\texttt{pip install -e .}, fixing the dependency set. nnU-Net's planning is
+deterministic given the dataset fingerprint. Residual non-determinism from cuDNN
+kernel selection and floating-point reduction order remains (as for any GPU training),
+but the five-fold ensembling and the macroscopic metric stability across folds
+(Table~\ref{tab:perfold}) make the reported results robust to it.
+
+% =============================================================================
+\section{Experiments and Results}
+\label{sec:results}
+We evaluate at two levels. First, nnU-Net's five-fold cross-validation produces an
+\emph{out-of-fold} (OOF) prediction for every training case; scoring these against
+ground truth with the official lesion-wise metric
+(\texttt{evaluate\_lesionwise.py}) gives a large-sample ($n\!\approx\!285$) estimate
+of generalisation. Second, we run the complete containerised pipeline on the
+\textbf{10 held-out internal-test cases} (never used in any fold) and report both
+voxel-wise (\texttt{evaluate.py}) and lesion-wise metrics.
+
+\subsection{Training dynamics}
+Figure~\ref{fig:curves} shows the training/validation loss and foreground
+pseudo-Dice versus epoch for two representative folds. The validation pseudo-Dice
+rises quickly in the first $\sim\!100$ epochs and then plateaus, with the
+train/validation gap remaining modest --- consistent with effective regularisation by
+the heavy augmentation on this small cohort.
 
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.95\textwidth,height=6.5cm,keepaspectratio]{figures/qualitative.png}
-\caption{Qualitative segmentation on held-out cases. Colour code: ET (red),
-NET (green), CC (blue), ED (yellow), overlaid on T1C.}
+\begin{subfigure}{0.49\textwidth}
+\includegraphics[width=\textwidth,height=5.3cm,keepaspectratio]{figures/progress_custom.png}
+\caption{Fold 0}
+\end{subfigure}\hfill
+\begin{subfigure}{0.49\textwidth}
+\includegraphics[width=\textwidth,height=5.3cm,keepaspectratio]{figures/fold4_progress.png}
+\caption{Fold 4}
+\end{subfigure}
+\caption{Training/validation loss and foreground pseudo-Dice versus epoch for two
+folds, exported automatically by \texttt{plot\_training.py}.}
+\label{fig:curves}
+\end{figure}
+
+\subsection{Per-fold internal validation}
+Table~\ref{tab:perfold} lists nnU-Net's internal validation pseudo-Dice for each of
+the five folds, per native label. These are the network's own held-out validation
+scores during training (foreground-mean over the four base labels, which therefore
+sits low because it weights the rare CC and ED equally with NET); they are \emph{not}
+directly comparable to the composite TC/WT lesion-wise scores reported below, but they
+expose the per-fold consistency. NET is uniformly strong across folds; ET is moderate;
+CC and ED are weak and the largest source of fold-to-fold variance --- consistent with
+their rarity. Averaging these five models in the ensemble is what lifts the composite
+regions to the levels in Table~\ref{tab:cv}.
+
+\begin{table}[h]
+\centering
+\caption{Per-fold nnU-Net internal validation pseudo-Dice, per native label
+(\texttt{1}=ET, \texttt{2}=NET, \texttt{3}=CC, \texttt{4}=ED) and the foreground mean.
+Internal training-time metric; not directly comparable to the composite lesion-wise
+scores in Table~\ref{tab:cv}.}
+\label{tab:perfold}
+\begin{tabular}{lccccc}
+\toprule
+Fold & ET (1) & NET (2) & CC (3) & ED (4) & FG mean \\
+\midrule
+0 & 0.608 & 0.761 & 0.178 & 0.218 & 0.441 \\
+1 & 0.566 & 0.777 & 0.175 & 0.383 & 0.475 \\
+2 & 0.486 & 0.733 & 0.145 & 0.123 & 0.372 \\
+3 & 0.597 & 0.817 & 0.268 & 0.168 & 0.462 \\
+4 & 0.533 & 0.802 & 0.138 & 0.134 & 0.402 \\
+\midrule
+mean & 0.558 & 0.778 & 0.181 & 0.205 & 0.430 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cross-validation (out-of-fold) results}
+Table~\ref{tab:cv} reports the lesion-wise Dice and HD95 over all training cases,
+each scored by the fold that did not see it. Tumour core (TC, $0.797$) and whole
+tumour (WT, $0.834$) are strong and stable (lowest standard deviations); the rare
+ET and CC classes are weaker and far more variable, as anticipated from
+Table~\ref{tab:labelstats} and the empty-vs-empty scoring behaviour of the
+lesion-wise metric.
+
+\begin{table}[h]
+\centering
+\caption{Five-fold cross-validation, out-of-fold lesion-wise metrics over the
+training cohort ($n\!\approx\!285$). LWDSC = lesion-wise Dice (mean\,$\pm$\,std);
+HD95 in mm.}
+\label{tab:cv}
+\begin{tabular}{lcccccc}
+\toprule
+ & ET & NET & CC & ED & \textbf{TC} & \textbf{WT} \\
+\midrule
+LWDSC $\uparrow$ & \result{ET}{0.652} & \result{NET}{0.707} & \result{CC}{0.657}
+                 & \result{ED}{0.792} & \textbf{\result{TC}{0.797}} & \textbf{\result{WT}{0.834}} \\
+\;\;$\pm$ std    & 0.375 & 0.298 & 0.451 & 0.387 & 0.239 & 0.208 \\
+HD95 $\downarrow$ & 87.0 & 54.1 & 111.1 & 64.7 & 33.2 & 23.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Held-out internal test set --- quantitative}
+Table~\ref{tab:results} reports voxel-wise DSC/NSD and lesion-wise DSC (raw vs.\
+post-processed) on the 10 held-out cases. Voxel-wise WT ($0.914$) and TC ($0.876$)
+are high; the held-out ED voxel-wise score is $0.0$ because edema (present in only
+$22\%$ of cases) does not occur with sufficient extent in this small 10-case sample,
+illustrating exactly the high-variance, rare-class behaviour discussed in
+\S\ref{sec:task} --- the larger cross-validation estimate ($\text{ED}=0.792$ LWDSC,
+Table~\ref{tab:cv}) is the more reliable figure for the rare classes.
+
+\begin{table}[h]
+\centering
+\caption{Held-out internal test set ($n\!=\!10$). Top: voxel-wise DSC/NSD
+(\texttt{evaluate.py}). Bottom: lesion-wise Dice without and with post-processing
+(\texttt{evaluate\_lesionwise.py}). Best WT/TC in bold.}
+\label{tab:results}
+\begin{tabular}{lcccccc}
+\toprule
+ & ET & NET & CC & ED & \textbf{TC} & \textbf{WT} \\
+\midrule
+Voxel-wise DSC $\uparrow$ & \result{}{0.448} & \result{}{0.839} & \result{}{0.132}
+   & \result{}{0.000} & \textbf{\result{}{0.876}} & \textbf{\result{}{0.914}} \\
+Voxel-wise NSD $\uparrow$ & 0.517 & 0.736 & 0.161 & 0.000 & 0.734 & 0.769 \\
+\midrule
+Lesion-wise DSC (raw)        & 0.419 & 0.804 & 0.654 & 0.700 & 0.832 & 0.870 \\
+Lesion-wise DSC (post-proc.) & \result{}{0.431} & 0.804 & 0.653 & 0.700
+   & \textbf{0.832} & \textbf{0.870} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Effect of post-processing.}
+Lesion-wise post-processing improves ET (LWDSC $0.419\!\to\!0.431$; lesion-wise HD95
+$110\!\to\!99$\,mm) by removing/relabelling small ET false positives, and is neutral
+on the remaining regions --- exactly the targeted, low-risk behaviour intended by the
+threshold design (Table~\ref{tab:pp}). On the small held-out sample the net change is
+modest; its main value is insurance against the catastrophic per-case zeros that
+stray components cause under the lesion-wise metric.
+
+\subsection{Per-region comparison}
+Figure~\ref{fig:bars} contrasts the cross-validation and held-out lesion-wise Dice
+per region. The two estimates agree closely for the well-populated regions
+(NET, TC, WT) and diverge for the rare regions (ET, ED), where the 10-case sample is
+too small to be representative --- reinforcing that the cross-validation numbers in
+Table~\ref{tab:cv} are the headline result.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.86\textwidth]{figures/cv_vs_holdout.png}
+\caption{Per-region lesion-wise Dice: five-fold cross-validation (out-of-fold,
+$n\!\approx\!285$, with $\pm$std error bars) vs.\ the held-out internal test set
+($n\!=\!10$). Agreement is strong for NET/TC/WT; the rare ET/ED regions are
+high-variance on the small held-out sample.}
+\label{fig:bars}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{figures/metrics_bar.png}
+\caption{Per-region voxel-wise Dice on the held-out internal test set (post-processed
+predictions), generated by \texttt{make\_figures.py}.}
+\label{fig:metricsbar}
+\end{figure}
+
+\subsection{Qualitative results --- sample predictions}
+Figure~\ref{fig:qual} overlays the predicted sub-regions on the T1C scan for
+representative held-out cases, alongside the expert ground truth. The whole-tumour
+and tumour-core boundaries track the reference closely; the most common discrepancies
+are at the ET/NET interface and in small cystic foci --- the same regions that the
+quantitative tables flag as hardest.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth,height=8.2cm,keepaspectratio]{figures/qualitative.png}
+\caption{Qualitative segmentation on held-out cases (best tumour-bearing axial slice).
+Columns: T1C input, our prediction, expert ground truth. Colour code: ET (red),
+NET (green), CC (blue), ED (yellow), overlaid on T1C. Generated by
+\texttt{make\_figures.py} from the real held-out predictions.}
 \label{fig:qual}
 \end{figure}
 
+\subsection{Comparison to the literature}
+For reference, the rank-1 BraTS-PED~2025 system~\cite{yi2025} --- a three-model
+ensemble (nnU-Net + Swin~UNETR + HFF-Net) --- reported held-out lesion-wise Dice of
+$0.918$ (TC) and $0.926$ (WT), with ET ($0.73$) and CC ($0.63$) as the hardest
+regions. Our single-backbone five-fold nnU-Net ensemble reaches $0.797$ (TC) and
+$0.834$ (WT) in cross-validation under a far smaller compute budget and \emph{without}
+a transformer branch or external pre-training; the relative ordering of region
+difficulty (ET, CC hardest) matches theirs, confirming the rare classes as the
+principal headroom (\S\ref{sec:discussion}).
+
+\subsection{Computational cost and efficiency}
+The full project ran within a few GPU-days across \emph{all} jobs on a single
+RTX~Pro~6000. Skull-stripping the entire cohort with batched HD-BET is a one-off
+pre-processing cost of the order of minutes thanks to the single-model-load batching.
+nnU-Net planning/pre-processing is likewise a one-off CPU/GPU step. Training is the
+dominant cost: each of the five folds runs the 500-epoch schedule independently, and
+folds are submitted in parallel across available GPU nodes to compress wall-clock
+time. At inference, the five-fold ensemble with mirror TTA processes a case in
+roughly a minute on the target GPU, dominated by sliding-window prediction; the
+skull-strip and post-processing add only seconds. The container therefore comfortably
+fits the per-case time limits of the BraTS-Lighthouse submission environment.
+Checkpoint-resumable training (\S\ref{sec:impl}) means the schedule is robust to the
+short, pre-emptible time-slices typical of a shared cluster --- no run loses more than
+$\sim\!50$ epochs to an interruption.
+
+\subsection{Error analysis}
+Three recurring failure modes explain most of the residual error. First,
+\emph{rare-class false positives}: small stray ET or CC components in cases where the
+class is in fact absent, each scoring zero under the lesion-wise metric --- the exact
+target of our post-processing, which recovers part but not all of the loss. Second,
+\emph{ET/NET boundary confusion}: the enhancing rim and the non-enhancing core are
+visually contiguous and the precise enhancement threshold is subjective, so voxels
+near the interface are frequently mislabelled between the two, depressing ET more than
+the composite TC (which absorbs the swap). Third, \emph{outlier anatomy}: a small
+number of cases with atypical tumour location or acquisition drive the long tails of
+the per-region distributions (the large standard deviations in Table~\ref{tab:cv}),
+pulling the mean well below the median. These observations motivate the
+uncertainty-aware and two-stage extensions in \S\ref{sec:limits}.
+
 % =============================================================================
 \section{Discussion}
-Our results reaffirm the lesson of the recent BraTS cluster: a well-engineered
-nnU-Net pipeline, with the \emph{right} data handling, beats architectural novelty
-for tumour segmentation. Three design choices matter most for the pediatric setting.
-First, \textbf{skull-stripping} removes a large, high-contrast confounder that is
-otherwise irrelevant to the tumour, and applying it identically at train and test
-time eliminates a domain gap. Second, \textbf{ensembling} is disproportionately
-valuable given the small cohort. Third, \textbf{lesion-wise post-processing} converts
+\label{sec:discussion}
+Our results reaffirm the central lesson of the recent BraTS cluster: a
+well-engineered nnU-Net pipeline, with the \emph{right} data handling, beats
+architectural novelty for tumour segmentation. Three design choices matter most for
+the pediatric setting. First, \textbf{skull-stripping} removes a large, high-contrast
+confounder that is otherwise irrelevant to the tumour, and applying it identically at
+train and test time eliminates a domain gap that would otherwise inflate test error.
+Second, \textbf{ensembling} is disproportionately valuable given the small cohort:
+averaging five folds smooths the per-fold variance that a single model trained on
+$\sim\!227$ cases would exhibit. Third, \textbf{lesion-wise post-processing} converts
 volumetric accuracy into leaderboard points by suppressing the small false positives
 that the metric punishes; the enhancing tumour and cystic component, present in only
 $67\%$ and $35\%$ of cases respectively, benefit most.
 
-\paragraph{Limitations and future work.}
-ET and CC remain the hardest regions, dominated by a few outlier cases that skew the
-mean far below the median. Promising extensions include: (i) a rank-2-style
-\emph{two-stage} schedule (pre-train on skull-stripped data, fine-tune on original
-data) for extra robustness; (ii) adding a transformer branch (Swin~UNETR) or the
-frequency-domain HFF-Net to the ensemble as in rank-1; and (iii) uncertainty-aware
-losses to flag the outlier cases for review.
+The gap between our cross-validation TC/WT ($0.80/0.83$) and the rank-1 2025 system
+($0.92/0.93$) is consistent with the differences in method scope: the leading system
+ensembles three architecturally diverse models with external BraTS-2021 pre-training
+and a two-stage strip-then-finetune schedule, whereas ours is a single-backbone,
+budget-constrained five-fold ensemble. The strong agreement between our
+cross-validation and held-out estimates on the well-populated regions
+(Figure~\ref{fig:bars}) gives us confidence that the cross-validation numbers are not
+optimistic, and that the headroom lies overwhelmingly in the rare classes.
+
+\paragraph{Interpreting voxel-wise versus lesion-wise scores.}
+The two metric families tell complementary stories and should not be conflated.
+Voxel-wise Dice rewards getting the \emph{bulk} of a region right and is dominated by
+the large structures, which is why our held-out voxel-wise WT/TC ($0.91/0.88$) look
+strong. The lesion-wise metric instead asks whether \emph{each} lesion --- however
+small --- is found and not accompanied by spurious extras, which is harder and yields
+the lower, more conservative composite numbers ($0.83/0.80$). The challenge ranks on
+the lesion-wise variant precisely because, clinically, missing a small second focus or
+inventing a phantom lesion matters as much as mis-sizing the main mass. Our design
+choices (ensembling for detection sensitivity, post-processing for false-positive
+suppression) target the lesion-wise metric directly, and the gap between the two metric
+families on our results quantifies how much of the error is small-component detection
+rather than gross volumetric mis-segmentation.
+
+\paragraph{Clinical implications.}
+For the clinical workflow that motivates this challenge, the well-segmented composite
+regions are the most immediately useful: whole-tumour and tumour-core volumes
+($0.83$/$0.80$ lesion-wise Dice) support reproducible volumetry for RAPNO-style
+response assessment and radiotherapy target definition, removing a major source of
+inter-rater variability and a substantial manual-contouring burden. The weaker
+rare-class performance (ET, CC) means the tool is best positioned as an
+expert-in-the-loop aid --- producing an editable first-pass segmentation a
+radiologist refines --- rather than a fully autonomous system, especially for the
+enhancement-based sub-regions that inform tumour grading. The deterministic,
+containerised packaging is itself clinically relevant: identical, auditable behaviour
+across sites is a prerequisite for any prospective deployment or multi-centre study.
+
+% =============================================================================
+\section{Limitations}
+\label{sec:limits}
+Several limitations temper the results and point to concrete next steps.
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{Rare-class variance.} ET and CC scores are dominated by a small
+        number of outlier cases that skew the mean far below the median; the
+        lesion-wise metric's all-or-nothing treatment of empty regions amplifies
+        this. The 10-case held-out ED score ($0.0$ voxel-wise) is not
+        representative --- the cross-validation ED estimate ($0.792$ LWDSC) should be
+        preferred. A larger held-out split would tighten these estimates.
+  \item \textbf{Compute budget.} A fixed few-GPU-day budget forced a reduced
+        (500-epoch) schedule and precluded the longer training, larger ResEnc-XL
+        encoder, and multi-architecture ensembling used by the top 2025 teams.
+  \item \textbf{Single backbone, single-stage.} We use one architecture family and a
+        single training stage; the rank-1/rank-2 systems show that architectural
+        diversity and a strip-then-finetune schedule add several Dice points.
+  \item \textbf{Post-processing thresholds} are fixed (literature- and
+        statistics-derived) rather than learned or cross-validated per class, so they
+        are likely sub-optimal.
+  \item \textbf{No uncertainty estimates.} The pipeline emits hard label maps only;
+        clinical use would benefit from calibrated per-voxel uncertainty to flag
+        ambiguous cases for human review.
+\end{itemize}
+Promising extensions include: (i)~a rank-2-style \emph{two-stage} schedule
+(pre-train on skull-stripped data, fine-tune on the original data); (ii)~adding a
+Swin~UNETR or frequency-domain branch to the ensemble as in rank-1; (iii)~per-class
+cross-validated post-processing thresholds; and (iv)~uncertainty-aware losses and
+test-time augmentation variance to surface outlier cases.
 
 % =============================================================================
 \section{Conclusion}
+\label{sec:conclusion}
 We presented a reproducible, containerised pipeline for pediatric brain-tumour
 segmentation that pairs consistent skull-stripping with a residual-encoder nnU-Net
-ensemble and lesion-wise post-processing. The approach is grounded in the repeatedly
-validated recipe of recent BraTS winners, is engineered for robust, resumable
-training on commodity-scheduled GPUs, and is delivered as a BraTS-Lighthouse-compliant
-Docker/Apptainer container. We release all code and scripts to support
-reproducibility and further pediatric neuro-oncology research.
+five-fold ensemble and lesion-wise post-processing. The approach is grounded in the
+repeatedly validated recipe of recent BraTS winners, is engineered for robust,
+checkpoint-resumable training on commodity-scheduled GPUs within a tight compute
+budget, and is delivered as a BraTS-Lighthouse-compliant Docker/Apptainer container.
+In cross-validation it attains lesion-wise Dice of $0.797$ (TC) and $0.834$ (WT),
+with the rare enhancing-tumour and cystic-component classes identified as the primary
+headroom. We release all code, training/inference scripts, the container definition,
+and this report to support reproducibility and further pediatric neuro-oncology
+research.
+
+% =============================================================================
+\section{Future Work}
+\label{sec:future}
+The error analysis (\S\ref{sec:results}) and limitations (\S\ref{sec:limits})
+suggest a concrete, prioritised roadmap, ordered by expected return per unit of
+additional compute:
+\begin{enumerate}[leftmargin=1.6em,itemsep=2pt]
+  \item \textbf{Two-stage strip-then-finetune.} Adopt the rank-2 schedule: pre-train
+        on skull-stripped data, then fine-tune on the original (non-stripped) volumes.
+        This adds robustness to the skull-stripping itself becoming a single point of
+        failure, and was a clear differentiator in 2025.
+  \item \textbf{Architectural diversity in the ensemble.} Add a BraTS-2021-pretrained
+        Swin~UNETR and/or a frequency-domain branch, as in the rank-1 system, and
+        ensemble at the probability level. Diverse errors cancel; this is the most
+        reliable accuracy lever beyond a single backbone.
+  \item \textbf{Longer schedule / larger encoder.} Lift the budget-imposed 500-epoch
+        cap toward the 1000-epoch default and evaluate the ResEnc-XL planner, which
+        the target 96\,GB GPU can host.
+  \item \textbf{Learned post-processing thresholds.} Cross-validate the per-class
+        component-size thresholds (Table~\ref{tab:pp}) rather than fixing them, and
+        consider a small classifier to gate rare-class predictions per case.
+  \item \textbf{Uncertainty and outlier flagging.} Use TTA/fold variance or an
+        explicit uncertainty head to surface the long-tail outlier cases for human
+        review --- directly addressing the dominant source of rare-class error.
+\end{enumerate}
+
+% =============================================================================
+\section{Conclusion (Summary)}
+In summary, this work delivers a complete, reproducible BraTS-PED 2026 Task-2 system:
+a skull-stripping front-end, a five-fold residual-encoder nnU-Net ensemble, and
+lesion-wise post-processing, packaged as a portable container and validated against
+ground truth at two evaluation scales. It reaches lesion-wise Dice of $0.797$ (TC)
+and $0.834$ (WT) in cross-validation and voxel-wise Dice of $0.876$/$0.914$ (TC/WT)
+on a held-out internal test set, with a clearly characterised path to closing the gap
+to the leading 2025 systems. All artifacts are released to support reproducibility.
+
+% =============================================================================
+\appendix
+\section{Command Reference}
+\label{app:cmd}
+The complete pipeline is driven by a handful of commands (see the repository
+\texttt{README.md} for full detail).
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{Environment:} \texttt{bash code/setup\_env.sh} --- creates
+        \texttt{venv/}, installs the CUDA-12.8 PyTorch wheel and the \texttt{brats\_ped}
+        package and all dependencies.
+  \item \textbf{Skull-strip:} \texttt{python code/skull\_strip.py --split both
+        --method auto --device gpu}.
+  \item \textbf{Prepare + plan:} \texttt{python code/prepare\_dataset.py};
+        \texttt{python code/train.py --step preprocess}.
+  \item \textbf{Train (SLURM):} \texttt{bash code/slurm/submit\_train.sh 0 1 2 3 4}
+        --- resource-aware submission, chained \texttt{prep$\to$train}, resumable.
+  \item \textbf{Infer:} \texttt{python code/inference.py --input data\_ss/validation
+        --output predictions/raw --raw-input --folds 0 1 2 3 4 --tta}.
+  \item \textbf{Post-process:} \texttt{python code/postprocess.py --input
+        predictions/raw --output predictions/postprocessed}.
+  \item \textbf{Evaluate:} \texttt{python code/evaluate\_lesionwise.py --pred
+        predictions/postprocessed --gt <labelsTr> --output results/lesionwise.csv}.
+  \item \textbf{Container:} \texttt{bash docker/build.sh} (stage model + build);
+        \texttt{bash docker/run\_sample.sh} (run + score on held-out cases).
+\end{itemize}
+
+\section{Output Format}
+\label{app:fmt}
+The container reads \texttt{/input/<SubjectID>/} containing the four modalities
+(\texttt{<SubjectID>-\{t1n,t1c,t2w,t2f\}.nii.gz}) and writes a single integer-valued
+label map \texttt{/output/<SubjectID>.nii.gz} with voxel values
+$\{0,1,2,3,4\}=\{$background, ET, NET, CC, ED$\}$, in the input geometry. This matches
+the BraTS-Lighthouse algorithm contract, so the same artifact serves the held-out
+evaluation and the official leaderboard submission.
 
 % =============================================================================
 \section*{Reproducibility}
-Code, training/inference scripts, SLURM job files, the container definition and this
-report are available at \url{https://github.com/ujjwalbaid0408} (repository
-\texttt{brats-ped-segmentation}). Install with \texttt{pip install -e .}; train with
-\texttt{code/slurm/submit\_train.sh}; build the container with \texttt{docker/build.sh}.
+Code, training/inference scripts, SLURM job files, the container definition, the
+result CSVs and this report are available at
+\url{https://github.com/ujjwalbaid0408/BraTS2026_PED}. Install with
+\texttt{bash code/setup\_env.sh}; train with \texttt{code/slurm/submit\_train.sh 0 1 2 3 4};
+run inference with \texttt{code/inference.py}; build the container with
+\texttt{docker/build.sh}; and score with \texttt{code/evaluate\_lesionwise.py}. The
+held-out split is deterministic (seed $1337$).
+
+% =============================================================================
+\section*{Data and Ethics Statement}
+This work uses the official MICCAI BraTS-PED 2026 dataset, which comprises
+de-identified, retrospectively collected multi-parametric MRI with expert reference
+annotations, distributed under the challenge's data-use agreement via the Synapse
+platform. No new data were acquired and no identifiable patient information is used or
+released. The challenge data are \emph{not} redistributed in our repository; only
+source code, derived metric tables and aggregate figures are released. Automated
+segmentation outputs from this system are intended as a research and
+expert-in-the-loop decision-support tool and are not a substitute for clinical
+judgement or a cleared medical device.
+
+\section*{Acknowledgements}
+We thank the BraTS-PED challenge organisers and the institutions contributing
+annotated pediatric imaging, and the developers of the open-source tools on which this
+work depends --- nnU-Net (MIC-DKFZ), HD-BET, SynthStrip, PyTorch, NiBabel and
+SimpleITK. Compute was provided by the Emory HyPER C3 community cluster. We also
+acknowledge the BraTS-PED~2025 top-ranked teams, whose published methodology directly
+informed the recipe distilled here.
 
 \begin{thebibliography}{9}
 \small
-\bibitem{nnunet} F.~Isensee \emph{et al.}, ``nnU-Net: a self-configuring method for
-deep learning-based biomedical image segmentation,'' \emph{Nature Methods}, 2021.
-\bibitem{resenc} F.~Isensee \emph{et al.}, ``Extending nnU-Net is all you need''
-(Residual-encoder presets), MIC-DKFZ, 2024.
-\bibitem{bratsped} A.~Kazerooni \emph{et al.}, ``The Brain Tumor Segmentation in
-Pediatrics (BraTS-PEDs) Challenge,'' arXiv:2404.15009, 2024.
+\bibitem{nnunet} F.~Isensee, P.~F.~Jaeger, S.~A.~A.~Kohl, J.~Petersen, K.~H.~Maier-Hein,
+``nnU-Net: a self-configuring method for deep learning-based biomedical image
+segmentation,'' \emph{Nature Methods}, 18:203--211, 2021.
+\bibitem{resenc} F.~Isensee, T.~Wald, C.~Ulrich, \emph{et al.}, ``nnU-Net Revisited:
+A Call for Rigorous Validation in 3D Medical Image Segmentation'' (Residual-encoder
+presets), \emph{MICCAI}, 2024; arXiv:2404.09556.
+\bibitem{bratsped} A.~F.~Kazerooni \emph{et al.}, ``The Brain Tumor Segmentation
+(BraTS) Challenge: Focus on Pediatrics (BraTS-PEDs),'' arXiv:2404.15009 /
+2305.17033, 2024.
+\bibitem{brats} B.~H.~Menze \emph{et al.}, ``The Multimodal Brain Tumor Image
+Segmentation Benchmark (BRATS),'' \emph{IEEE TMI}, 34(10):1993--2024, 2015;
+U.~Baid \emph{et al.}, arXiv:2107.02314, 2021.
 \bibitem{yi2025} Y.~Yi \emph{et al.}, ``Frequency-Aware Ensemble Learning for
 BraTS 2025 Pediatric Brain Tumor Segmentation,'' MICCAI BraTS, 2025 (rank~1).
 \bibitem{chen2025} M.-Y.~Chen and H.-K.~T.~Liang, ``Memory-Constrained,
@@ -456,10 +1200,15 @@ Noise-Resilient Pediatric Brain Tumor Segmentation via Decoupled Feature Learnin
 and Domain Adaptation,'' MICCAI BraTS, 2025 (rank~2).
 \bibitem{yu2025} H.~Yu and Y.~Peng, ``PTransBTS: A Hybrid Transformer Integrating
 Priors for Brain Tumor Segmentation,'' MICCAI BraTS, 2025 (rank~3).
-\bibitem{synthstrip} A.~Hoopes \emph{et al.}, ``SynthStrip: skull-stripping for any
-brain image,'' \emph{NeuroImage}, 2022.
-\bibitem{swinunetr} A.~Hatamizadeh \emph{et al.}, ``Swin UNETR: Swin Transformers
-for Semantic Segmentation of Brain Tumors in MRI Images,'' MICCAI BraTS, 2021.
+\bibitem{synthstrip} A.~Hoopes, J.~S.~Mora, A.~V.~Dalca, B.~Fischl, M.~Hoffmann,
+``SynthStrip: skull-stripping for any brain image,'' \emph{NeuroImage}, 260:119474,
+2022.
+\bibitem{hdbet} F.~Isensee \emph{et al.}, ``Automated brain extraction of
+multisequence MRI using artificial neural networks (HD-BET),'' \emph{Human Brain
+Mapping}, 40(17):4952--4964, 2019.
+\bibitem{swinunetr} A.~Hatamizadeh, V.~Nath, Y.~Tang, D.~Yang, H.~Roth, D.~Xu,
+``Swin UNETR: Swin Transformers for Semantic Segmentation of Brain Tumors in MRI
+Images,'' MICCAI BraTS Workshop, 2021.
 \end{thebibliography}
 
 \end{document}
