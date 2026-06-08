@@ -1,0 +1,88 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+title: "BraTS-PED 2026 (Task 2) — Pediatric Brain Tumor Segmentation"
+abstract: >-
+  A reproducible, containerized deep-learning pipeline for Task 2 of the
+  MICCAI BraTS-PED 2026 challenge: skull-stripping, a residual-encoder
+  nnU-Net v2 (3D full-resolution) 5-fold ensemble, and lesion-wise
+  post-processing for voxel-wise segmentation of four pediatric
+  brain-tumor sub-regions (ET, NET, CC, ED) from multi-parametric MRI.
+type: software
+authors:
+  - family-names: Baid
+    given-names: Ujjwal
+    email: ujjwalbaid0408@gmail.com
+license: MIT
+repository-code: "https://github.com/ujjwalbaid0408/BraTS2026_PED"
+version: "1.0.0"
+date-released: "2026-06-08"
+keywords:
+  - brain tumor segmentation
+  - pediatric
+  - BraTS
+  - nnU-Net
+  - medical image segmentation
+  - deep learning
+  - MRI
+references:
+  - type: article
+    title: "nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation"
+    authors:
+      - family-names: Isensee
+        given-names: Fabian
+      - family-names: Jaeger
+        given-names: "Paul F."
+      - family-names: Kohl
+        given-names: "Simon A. A."
+      - family-names: Petersen
+        given-names: Jens
+      - family-names: "Maier-Hein"
+        given-names: "Klaus H."
+    journal: "Nature Methods"
+    volume: 18
+    start: 203
+    end: 211
+    year: 2021
+    doi: 10.1038/s41592-020-01008-z
+  - type: article
+    title: "nnU-Net Revisited: A Call for Rigorous Validation in 3D Medical Image Segmentation"
+    authors:
+      - family-names: Isensee
+        given-names: Fabian
+      - family-names: Wald
+        given-names: Tassilo
+      - family-names: Ulrich
+        given-names: Constantin
+      - family-names: "Maier-Hein"
+        given-names: "Klaus H."
+    year: 2024
+    notes: "MICCAI 2024; arXiv:2404.09556"
+  - type: article
+    title: "The Brain Tumor Segmentation (BraTS) Challenge 2023: Focus on Pediatrics (CBTN-CONNECT-DIPGR-ASNR-MICCAI BraTS-PEDs)"
+    authors:
+      - family-names: Kazerooni
+        given-names: "Anahita Fathi"
+    year: 2024
+    notes: "arXiv:2404.15009"
+  - type: article
+    title: "SynthStrip: skull-stripping for any brain image"
+    authors:
+      - family-names: Hoopes
+        given-names: Andrew
+    journal: "NeuroImage"
+    volume: 260
+    start: 119474
+    year: 2022
+    doi: 10.1016/j.neuroimage.2022.119474
+  - type: article
+    title: "Automated brain extraction of multisequence MRI using artificial neural networks (HD-BET)"
+    authors:
+      - family-names: Isensee
+        given-names: Fabian
+    journal: "Human Brain Mapping"
+    volume: 40
+    issue: 17
+    start: 4952
+    end: 4964
+    year: 2019
+    doi: 10.1002/hbm.24750
